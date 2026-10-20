@@ -1,0 +1,267 @@
+// Package domain содержит сущности кредитного конвейера и правила их изменения.
+// Пакет не зависит от инфраструктуры (БД, HTTP), поэтому его легко покрыть тестами
+// и вынести в отдельный сервис при переходе от модульного монолита к микросервисам.
+package domain
+
+import (
+	"errors"
+	"slices"
+	"time"
+)
+
+var (
+	ErrNotFound          = errors.New("not found")
+	ErrInvalidTransition = errors.New("invalid status transition")
+	ErrCompanyNotFound   = errors.New("company not found in registry")
+)
+
+// ValidationError — ошибка входных данных с привязкой к полю анкеты.
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e *ValidationError) Error() string { return e.Field + ": " + e.Message }
+
+// Status — состояние заявки в кредитном конвейере.
+type Status string
+
+const (
+	StatusDraft        Status = "draft"         // анкета заполняется клиентом
+	StatusSubmitted    Status = "submitted"     // отправлена, ждёт обработки
+	StatusDataCheck    Status = "data_check"    // проверка данных: ЕГРЮЛ/ЕГРИП, БКИ, сверка выручки
+	StatusScoring      Status = "scoring"       // оценка риска и кредитное решение
+	StatusApproved     Status = "approved"      // одобрено на запрошенных условиях
+	StatusCounterOffer Status = "counter_offer" // одобрено на иных условиях
+	StatusNeedInfo     Status = "need_info"     // нужно уточнить данные
+	StatusRejected     Status = "rejected"      // отказ
+	StatusSigning      Status = "signing"       // клиент принял условия, подписание документов
+	StatusIssued       Status = "issued"        // средства выданы (симуляция)
+	StatusCancelled    Status = "cancelled"     // отменена клиентом
+)
+
+var transitions = map[Status][]Status{
+	StatusDraft:        {StatusSubmitted, StatusCancelled},
+	StatusSubmitted:    {StatusDataCheck, StatusCancelled},
+	StatusDataCheck:    {StatusScoring, StatusNeedInfo, StatusRejected},
+	StatusScoring:      {StatusApproved, StatusCounterOffer, StatusNeedInfo, StatusRejected},
+	StatusApproved:     {StatusSigning, StatusCancelled},
+	StatusCounterOffer: {StatusSigning, StatusCancelled},
+	StatusNeedInfo:     {StatusSubmitted, StatusCancelled},
+	StatusSigning:      {StatusIssued, StatusCancelled},
+}
+
+// CanTransition проверяет переход по диаграмме состояний (docs/ARCHITECTURE.md).
+func CanTransition(from, to Status) bool {
+	return slices.Contains(transitions[from], to)
+}
+
+// Editable — можно ли клиенту править анкету в этом статусе.
+func (s Status) Editable() bool { return s == StatusDraft || s == StatusNeedInfo }
+
+// InPipeline — заявка обрабатывается банком автоматически.
+func (s Status) InPipeline() bool {
+	return s == StatusSubmitted || s == StatusDataCheck || s == StatusScoring
+}
+
+type Company struct {
+	INN             string `json:"inn"`
+	OGRN            string `json:"ogrn"`
+	Type            string `json:"type"` // ООО | ИП
+	Name            string `json:"name"`
+	OKVED           string `json:"okved"`
+	OKVEDName       string `json:"okved_name"`
+	Address         string `json:"address"`
+	Director        string `json:"director"`
+	RegDate         string `json:"reg_date"` // YYYY-MM-DD
+	Status          string `json:"status"`   // active | liquidated
+	RevenueLastYear int64  `json:"revenue_last_year"`
+	Source          string `json:"source"`
+}
+
+type Financials struct {
+	AnnualRevenue      int64 `json:"annual_revenue"`
+	MonthlyObligations int64 `json:"monthly_obligations"`
+	Employees          int   `json:"employees"`
+}
+
+type Contact struct {
+	FullName string `json:"full_name"`
+	Position string `json:"position"`
+	Phone    string `json:"phone"`
+	Email    string `json:"email"`
+}
+
+type BureauReport struct {
+	Score          int    `json:"score"`
+	ActiveLoans    int    `json:"active_loans"`
+	HasOverdue     bool   `json:"has_overdue"`
+	MaxOverdueDays int    `json:"max_overdue_days"`
+	Source         string `json:"source"`
+}
+
+type Check struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Result  string `json:"result"` // ok | warn | fail
+	Details string `json:"details"`
+}
+
+type DecisionType string
+
+const (
+	DecisionApproved DecisionType = "approved"
+	DecisionCounter  DecisionType = "counter_offer"
+	DecisionNeedInfo DecisionType = "need_info"
+	DecisionRejected DecisionType = "rejected"
+)
+
+type Decision struct {
+	Type           DecisionType `json:"type"`
+	Amount         int64        `json:"amount,omitempty"`
+	TermMonths     int          `json:"term_months,omitempty"`
+	Rate           float64      `json:"rate,omitempty"`
+	MonthlyPayment int64        `json:"monthly_payment,omitempty"`
+	Reasons        []string     `json:"reasons"`
+}
+
+type Event struct {
+	Status  Status    `json:"status"`
+	At      time.Time `json:"at"`
+	Actor   string    `json:"actor"` // client | system | bank
+	Comment string    `json:"comment"`
+}
+
+type Application struct {
+	ID              string        `json:"id"`
+	Number          string        `json:"number"`
+	ClientID        string        `json:"-"`
+	ProductID       string        `json:"product_id"`
+	Amount          int64         `json:"amount"`
+	TermMonths      int           `json:"term_months"`
+	Purpose         string        `json:"purpose"`
+	INN             string        `json:"inn"`
+	Company         *Company      `json:"company,omitempty"`
+	Financials      Financials    `json:"financials"`
+	Contact         Contact       `json:"contact"`
+	Consent         bool          `json:"consent"`
+	Status          Status        `json:"status"`
+	Bureau          *BureauReport `json:"bureau,omitempty"`
+	Checks          []Check       `json:"checks"`
+	Score           *int          `json:"score,omitempty"`
+	Decision        *Decision     `json:"decision,omitempty"`
+	History         []Event       `json:"history"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
+	StatusChangedAt time.Time     `json:"status_changed_at"`
+}
+
+// Transition переводит заявку в новый статус с записью в историю (аудит).
+func (a *Application) Transition(to Status, actor, comment string, now time.Time) error {
+	if !CanTransition(a.Status, to) {
+		return ErrInvalidTransition
+	}
+	a.Status = to
+	a.UpdatedAt = now
+	a.StatusChangedAt = now
+	a.History = append(a.History, Event{Status: to, At: now, Actor: actor, Comment: comment})
+	return nil
+}
+
+// DraftPatch — частичное обновление анкеты (автосохранение каждого поля).
+type DraftPatch struct {
+	ProductID  *string     `json:"product_id"`
+	Amount     *int64      `json:"amount"`
+	TermMonths *int        `json:"term_months"`
+	Purpose    *string     `json:"purpose"`
+	INN        *string     `json:"inn"`
+	Financials *Financials `json:"financials"`
+	Contact    *Contact    `json:"contact"`
+	Consent    *bool       `json:"consent"`
+}
+
+func (a *Application) ApplyPatch(p DraftPatch, now time.Time) error {
+	if !a.Status.Editable() {
+		return ErrInvalidTransition
+	}
+	if p.ProductID != nil {
+		if _, ok := FindProduct(*p.ProductID); !ok {
+			return &ValidationError{"product_id", "неизвестный продукт"}
+		}
+		a.ProductID = *p.ProductID
+	}
+	if p.Amount != nil {
+		if *p.Amount < 0 {
+			return &ValidationError{"amount", "сумма не может быть отрицательной"}
+		}
+		a.Amount = *p.Amount
+	}
+	if p.TermMonths != nil {
+		a.TermMonths = *p.TermMonths
+	}
+	if p.Purpose != nil {
+		a.Purpose = *p.Purpose
+	}
+	if p.INN != nil {
+		a.INN = *p.INN
+	}
+	if p.Financials != nil {
+		if p.Financials.AnnualRevenue < 0 || p.Financials.MonthlyObligations < 0 || p.Financials.Employees < 0 {
+			return &ValidationError{"financials", "значения не могут быть отрицательными"}
+		}
+		a.Financials = *p.Financials
+	}
+	if p.Contact != nil {
+		a.Contact = *p.Contact
+	}
+	if p.Consent != nil {
+		a.Consent = *p.Consent
+	}
+	a.UpdatedAt = now
+	return nil
+}
+
+// ValidateForSubmit — проверка полноты анкеты перед отправкой в конвейер.
+func (a *Application) ValidateForSubmit() error {
+	p, ok := FindProduct(a.ProductID)
+	if !ok {
+		return &ValidationError{"product_id", "выберите продукт"}
+	}
+	if a.Amount < p.MinAmount || a.Amount > p.MaxAmount {
+		return &ValidationError{"amount", "сумма вне диапазона продукта"}
+	}
+	if a.TermMonths < p.MinTerm || a.TermMonths > p.MaxTerm {
+		return &ValidationError{"term_months", "срок вне диапазона продукта"}
+	}
+	if !ValidINN(a.INN) {
+		return &ValidationError{"inn", "ИНН должен содержать 10 или 12 цифр"}
+	}
+	if a.Company == nil {
+		return &ValidationError{"inn", "компания не найдена в реестре"}
+	}
+	if a.Financials.AnnualRevenue <= 0 {
+		return &ValidationError{"financials.annual_revenue", "укажите выручку за год"}
+	}
+	if len([]rune(a.Contact.FullName)) < 5 {
+		return &ValidationError{"contact.full_name", "укажите ФИО"}
+	}
+	if len(a.Contact.Phone) < 10 {
+		return &ValidationError{"contact.phone", "укажите телефон"}
+	}
+	if !a.Consent {
+		return &ValidationError{"consent", "нужно согласие на обработку данных и запрос в БКИ"}
+	}
+	return nil
+}
+
+func ValidINN(inn string) bool {
+	if len(inn) != 10 && len(inn) != 12 {
+		return false
+	}
+	for _, r := range inn {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}

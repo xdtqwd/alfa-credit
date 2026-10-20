@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Кредитный кабинет — Альфа Бизнес</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23EF3124'/%3E%3Cpath d='M10 22h12M16 8v10m-5-5h10' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__in">
+      <a class="brand" href="#/">
+        <span class="brand__mark" aria-hidden="true">₽</span>
+        <span class="brand__text"><b>Кредитный кабинет</b><small>Альфа Бизнес</small></span>
+      </a>
+      <nav class="topnav">
+        <a href="#/" data-nav="home">Главная</a>
+        <a href="#/apps" data-nav="apps">Мои заявки</a>
+        <a href="#/bank" data-nav="bank">Банк</a>
+      </nav>
+      <div class="profile" title="Демо-клиент">
+        <span class="profile__ava">ДК</span>
+        <span class="profile__name">Демо-клиент</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="hotbar-wrap" aria-label="Быстрые действия">
+    <div class="hotbar" id="hotbar"></div>
+  </section>
+
+  <main id="view" class="container"></main>
+
+  <div id="modal-root"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

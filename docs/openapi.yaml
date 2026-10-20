@@ -1,0 +1,271 @@
+openapi: 3.0.3
+info:
+  title: Кредитный кабинет предпринимателя — API
+  version: 0.1.0
+  description: |
+    REST API кредитного конвейера для МСБ. Клиентские методы требуют заголовок `X-Client-ID`
+    (демо-идентификация; в проде — OIDC на API Gateway). Методы банка — `X-Bank-Token`.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: catalog
+  - name: applications
+  - name: bank
+  - name: ops
+paths:
+  /healthz:
+    get: { tags: [ops], summary: Liveness, responses: { '200': { description: OK } } }
+  /readyz:
+    get: { tags: [ops], summary: Readiness, responses: { '200': { description: OK }, '503': { description: Not ready } } }
+
+  /api/v1/products:
+    get:
+      tags: [catalog]
+      summary: Каталог кредитных продуктов
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Product' } } } } }
+  /api/v1/calc:
+    post:
+      tags: [catalog]
+      summary: Расчёт аннуитетного платежа
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateInput' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CalcResult' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  /api/v1/companies/{inn}:
+    get:
+      tags: [catalog]
+      summary: Поиск компании по ИНН (ЕГРЮЛ/ЕГРИП, мок)
+      security: [{ client: [] }]
+      parameters: [{ name: inn, in: path, required: true, schema: { type: string, pattern: '^\d{10}(\d{2})?$' } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Company' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Validation' }
+
+  /api/v1/applications:
+    post:
+      tags: [applications]
+      summary: Создать черновик анкеты сразу из калькулятора
+      security: [{ client: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+    get:
+      tags: [applications]
+      summary: Заявки текущего клиента
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } } }
+  /api/v1/applications/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [applications]
+      summary: Заявка (используется для поллинга прогресса)
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [applications]
+      summary: Автосохранение анкеты (частичное обновление). При смене ИНН подтягивается компания.
+      security: [{ client: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DraftPatch' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /api/v1/applications/{id}/submit:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [applications]
+      summary: Отправить в конвейер (draft|need_info → submitted)
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /api/v1/applications/{id}/accept:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [applications]
+      summary: Принять одобрение/контрпредложение (→ signing)
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/v1/applications/{id}/sign:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [applications]
+      summary: Подписать ПЭП и получить средства (симуляция, → issued)
+      security: [{ client: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirm: { type: boolean } }, required: [confirm] } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /api/v1/applications/{id}/cancel:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [applications]
+      summary: Отменить заявку
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/bank/applications:
+    get:
+      tags: [bank]
+      summary: Все заявки конвейера (кабинет сотрудника)
+      security: [{ bank: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } } }
+        '401': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    client: { type: apiKey, in: header, name: X-Client-ID }
+    bank: { type: apiKey, in: header, name: X-Bank-Token }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string } }
+  responses:
+    Error:
+      description: Ошибка
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Validation:
+      description: Ошибка валидации (field — путь к полю анкеты)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, enum: [validation, not_found, company_not_found, invalid_transition, unauthorized, bad_request, internal] }
+            message: { type: string }
+            field: { type: string }
+    Status:
+      type: string
+      enum: [draft, submitted, data_check, scoring, approved, counter_offer, need_info, rejected, signing, issued, cancelled]
+    Product:
+      type: object
+      properties:
+        id: { type: string, example: business-dev }
+        name: { type: string }
+        description: { type: string }
+        rate: { type: number, example: 19.9 }
+        min_amount: { type: integer }
+        max_amount: { type: integer }
+        min_term: { type: integer }
+        max_term: { type: integer }
+        default_amount: { type: integer }
+        default_term: { type: integer }
+        purposes: { type: array, items: { type: string } }
+        badge: { type: string }
+    CreateInput:
+      type: object
+      required: [product_id]
+      properties:
+        product_id: { type: string, example: business-dev }
+        amount: { type: integer, example: 3000000 }
+        term_months: { type: integer, example: 24 }
+    CalcResult:
+      type: object
+      properties:
+        product_id: { type: string }
+        amount: { type: integer }
+        term_months: { type: integer }
+        rate: { type: number }
+        monthly_payment: { type: integer }
+        total: { type: integer }
+        overpayment: { type: integer }
+    Company:
+      type: object
+      properties:
+        inn: { type: string }
+        ogrn: { type: string }
+        type: { type: string, enum: [ООО, ИП] }
+        name: { type: string }
+        okved: { type: string }
+        okved_name: { type: string }
+        address: { type: string }
+        director: { type: string }
+        reg_date: { type: string, format: date }
+        status: { type: string, enum: [active, liquidated] }
+        revenue_last_year: { type: integer }
+        source: { type: string }
+    Financials:
+      type: object
+      properties:
+        annual_revenue: { type: integer }
+        monthly_obligations: { type: integer }
+        employees: { type: integer }
+    Contact:
+      type: object
+      properties:
+        full_name: { type: string }
+        position: { type: string }
+        phone: { type: string }
+        email: { type: string }
+    DraftPatch:
+      type: object
+      properties:
+        product_id: { type: string }
+        amount: { type: integer }
+        term_months: { type: integer }
+        purpose: { type: string }
+        inn: { type: string }
+        financials: { $ref: '#/components/schemas/Financials' }
+        contact: { $ref: '#/components/schemas/Contact' }
+        consent: { type: boolean }
+    Check:
+      type: object
+      properties:
+        code: { type: string, enum: [registry, bki, revenue, scoring] }
+        name: { type: string }
+        result: { type: string, enum: [ok, warn, fail] }
+        details: { type: string }
+    Decision:
+      type: object
+      properties:
+        type: { type: string, enum: [approved, counter_offer, need_info, rejected] }
+        amount: { type: integer }
+        term_months: { type: integer }
+        rate: { type: number }
+        monthly_payment: { type: integer }
+        reasons: { type: array, items: { type: string } }
+    Event:
+      type: object
+      properties:
+        status: { $ref: '#/components/schemas/Status' }
+        at: { type: string, format: date-time }
+        actor: { type: string, enum: [client, system, bank] }
+        comment: { type: string }
+    Application:
+      type: object
+      properties:
+        id: { type: string }
+        number: { type: string, example: КР-000001 }
+        product_id: { type: string }
+        amount: { type: integer }
+        term_months: { type: integer }
+        purpose: { type: string }
+        inn: { type: string }
+        company: { $ref: '#/components/schemas/Company' }
+        financials: { $ref: '#/components/schemas/Financials' }
+        contact: { $ref: '#/components/schemas/Contact' }
+        consent: { type: boolean }
+        status: { $ref: '#/components/schemas/Status' }
+        bureau:
+          type: object
+          properties: { score: { type: integer }, active_loans: { type: integer }, has_overdue: { type: boolean }, max_overdue_days: { type: integer }, source: { type: string } }
+        checks: { type: array, items: { $ref: '#/components/schemas/Check' } }
+        score: { type: integer }
+        decision: { $ref: '#/components/schemas/Decision' }
+        history: { type: array, items: { $ref: '#/components/schemas/Event' } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        status_changed_at: { type: string, format: date-time }

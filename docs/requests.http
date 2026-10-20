@@ -1,0 +1,62 @@
+### Коллекция запросов (VS Code REST Client / JetBrains HTTP Client)
+@host = http://localhost:8080
+@cid = demo-client-0001
+
+### Каталог
+GET {{host}}/api/v1/products
+
+### Калькулятор
+POST {{host}}/api/v1/calc
+Content-Type: application/json
+
+{"product_id":"business-dev","amount":3000000,"term_months":24}
+
+### Компания по ИНН
+GET {{host}}/api/v1/companies/7701234567
+X-Client-ID: {{cid}}
+
+### 1. Анкета сразу из калькулятора
+# @name create
+POST {{host}}/api/v1/applications
+X-Client-ID: {{cid}}
+Content-Type: application/json
+
+{"product_id":"business-dev","amount":3000000,"term_months":24}
+
+###
+@id = {{create.response.body.id}}
+
+### 2. Автосохранение анкеты
+PATCH {{host}}/api/v1/applications/{{id}}
+X-Client-ID: {{cid}}
+Content-Type: application/json
+
+{
+  "inn": "7701234567",
+  "financials": {"annual_revenue": 84000000, "monthly_obligations": 0, "employees": 25},
+  "contact": {"full_name": "Смирнов Алексей Викторович", "position": "Генеральный директор", "phone": "+79130001122"},
+  "consent": true
+}
+
+### 3. Отправить
+POST {{host}}/api/v1/applications/{{id}}/submit
+X-Client-ID: {{cid}}
+
+### 4. Прогресс (повторять, пока статус не станет approved / counter_offer / ...)
+GET {{host}}/api/v1/applications/{{id}}
+X-Client-ID: {{cid}}
+
+### 5. Принять условия
+POST {{host}}/api/v1/applications/{{id}}/accept
+X-Client-ID: {{cid}}
+
+### 6. Подписать и получить деньги
+POST {{host}}/api/v1/applications/{{id}}/sign
+X-Client-ID: {{cid}}
+Content-Type: application/json
+
+{"confirm": true}
+
+### Кабинет банка
+GET {{host}}/api/v1/bank/applications
+X-Bank-Token: demo-bank
