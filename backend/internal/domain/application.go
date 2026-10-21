@@ -38,6 +38,7 @@ const (
 	StatusSigning      Status = "signing"       // клиент принял условия, подписание документов
 	StatusIssued       Status = "issued"        // средства выданы (симуляция)
 	StatusCancelled    Status = "cancelled"     // отменена клиентом
+	StatusClosed       Status = "closed"        // кредит полностью погашен
 )
 
 var transitions = map[Status][]Status{
@@ -49,6 +50,7 @@ var transitions = map[Status][]Status{
 	StatusCounterOffer: {StatusSigning, StatusCancelled},
 	StatusNeedInfo:     {StatusSubmitted, StatusCancelled},
 	StatusSigning:      {StatusIssued, StatusCancelled},
+	StatusIssued:       {StatusClosed},
 }
 
 // CanTransition проверяет переход по диаграмме состояний (docs/ARCHITECTURE.md).
@@ -122,7 +124,20 @@ type Decision struct {
 	TermMonths     int          `json:"term_months,omitempty"`
 	Rate           float64      `json:"rate,omitempty"`
 	MonthlyPayment int64        `json:"monthly_payment,omitempty"`
-	Reasons        []string     `json:"reasons"`
+	Total          int64        `json:"total,omitempty"`
+	Overpayment    int64        `json:"overpayment,omitempty"`
+	// Requested — расчёт по тому, что просил клиент (для сравнения «было/стало»).
+	Requested *Quote `json:"requested,omitempty"`
+	// Reasons — объяснение простыми словами на данных анкеты.
+	Reasons []string `json:"reasons"`
+	// Advice — что можно сделать дальше (для отказа и уточнения).
+	Advice []string `json:"advice,omitempty"`
+}
+
+// SetOffer заполняет условия решения из единого расчёта.
+func (d *Decision) SetOffer(q Quote) {
+	d.Amount, d.TermMonths, d.Rate = q.Amount, q.TermMonths, q.Rate
+	d.MonthlyPayment, d.Total, d.Overpayment = q.MonthlyPayment, q.Total, q.Overpayment
 }
 
 type Event struct {
@@ -133,24 +148,29 @@ type Event struct {
 }
 
 type Application struct {
-	ID              string        `json:"id"`
-	Number          string        `json:"number"`
-	ClientID        string        `json:"-"`
-	ProductID       string        `json:"product_id"`
-	Amount          int64         `json:"amount"`
-	TermMonths      int           `json:"term_months"`
-	Purpose         string        `json:"purpose"`
-	INN             string        `json:"inn"`
-	Company         *Company      `json:"company,omitempty"`
-	Financials      Financials    `json:"financials"`
-	Contact         Contact       `json:"contact"`
-	Consent         bool          `json:"consent"`
-	Status          Status        `json:"status"`
-	Bureau          *BureauReport `json:"bureau,omitempty"`
-	Checks          []Check       `json:"checks"`
-	Score           *int          `json:"score,omitempty"`
-	Decision        *Decision     `json:"decision,omitempty"`
-	History         []Event       `json:"history"`
+	ID         string        `json:"id"`
+	Number     string        `json:"number"`
+	ClientID   string        `json:"-"`
+	ProductID  string        `json:"product_id"`
+	Amount     int64         `json:"amount"`
+	TermMonths int           `json:"term_months"`
+	Purpose    string        `json:"purpose"`
+	INN        string        `json:"inn"`
+	Company    *Company      `json:"company,omitempty"`
+	Financials Financials    `json:"financials"`
+	Contact    Contact       `json:"contact"`
+	Consent    bool          `json:"consent"`
+	Status     Status        `json:"status"`
+	Bureau     *BureauReport `json:"bureau,omitempty"`
+	Checks     []Check       `json:"checks"`
+	Score      *int          `json:"score,omitempty"`
+	Decision   *Decision     `json:"decision,omitempty"`
+	History    []Event       `json:"history"`
+	Payments   []Payment     `json:"payments"`
+	// Вычисляемые поля (Enrich) — считаются на сервере, клиент их только показывает.
+	Quote           *Quote        `json:"quote,omitempty"`
+	Schedule        []Installment `json:"schedule,omitempty"`
+	NextPayment     int64         `json:"next_payment,omitempty"`
 	CreatedAt       time.Time     `json:"created_at"`
 	UpdatedAt       time.Time     `json:"updated_at"`
 	StatusChangedAt time.Time     `json:"status_changed_at"`
@@ -166,6 +186,32 @@ func (a *Application) Transition(to Status, actor, comment string, now time.Time
 	a.StatusChangedAt = now
 	a.History = append(a.History, Event{Status: to, At: now, Actor: actor, Comment: comment})
 	return nil
+}
+
+// NextPaymentAmount — сумма очередного платежа по графику (последний платёж может отличаться).
+func (a *Application) NextPaymentAmount() int64 {
+	if a.Decision == nil {
+		return 0
+	}
+	s := Schedule(a.Amount, a.Decision.Rate, a.TermMonths)
+	if len(a.Payments) >= len(s) {
+		return 0
+	}
+	return s[len(a.Payments)].Payment
+}
+
+// Enrich заполняет вычисляемые поля перед отдачей клиенту.
+func (a *Application) Enrich() *Application {
+	if p, ok := FindProduct(a.ProductID); ok && a.Amount > 0 && a.TermMonths > 0 {
+		q := NewQuote(a.Amount, p.Rate, a.TermMonths)
+		a.Quote = &q
+	}
+	a.Schedule, a.NextPayment = nil, 0
+	if a.Decision != nil && (a.Status == StatusIssued || a.Status == StatusClosed) {
+		a.Schedule = Schedule(a.Amount, a.Decision.Rate, a.TermMonths)
+		a.NextPayment = a.NextPaymentAmount()
+	}
+	return a
 }
 
 // DraftPatch — частичное обновление анкеты (автосохранение каждого поля).

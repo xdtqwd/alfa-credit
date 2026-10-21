@@ -16,6 +16,8 @@ type Product struct {
 	DefaultTerm int      `json:"default_term"`
 	Purposes    []string `json:"purposes"`
 	Badge       string   `json:"badge,omitempty"`
+	// DefaultPayment — платёж при сумме и сроке по умолчанию (считает сервер).
+	DefaultPayment int64 `json:"default_payment"`
 }
 
 var catalog = []Product{
@@ -50,7 +52,14 @@ var catalog = []Product{
 	},
 }
 
-func Products() []Product { return catalog }
+func Products() []Product {
+	out := make([]Product, len(catalog))
+	for i, p := range catalog {
+		p.DefaultPayment = NewQuote(p.DefaultAmt, p.Rate, p.DefaultTerm).MonthlyPayment
+		out[i] = p
+	}
+	return out
+}
 
 func FindProduct(id string) (Product, bool) {
 	for _, p := range catalog {
@@ -86,24 +95,13 @@ func MaxAmountForPayment(payment int64, annualRate float64, months int) int64 {
 	return int64(float64(payment) * (1 - math.Pow(1+r, -float64(months))) / r)
 }
 
-type CalcResult struct {
-	ProductID      string  `json:"product_id"`
-	Amount         int64   `json:"amount"`
-	TermMonths     int     `json:"term_months"`
-	Rate           float64 `json:"rate"`
-	MonthlyPayment int64   `json:"monthly_payment"`
-	Total          int64   `json:"total"`
-	Overpayment    int64   `json:"overpayment"`
-}
-
-func Calculate(p Product, amount int64, term int) (CalcResult, error) {
+// Calculate — расчёт для калькулятора с проверкой лимитов продукта.
+func Calculate(p Product, amount int64, term int) (Quote, error) {
 	if amount < p.MinAmount || amount > p.MaxAmount {
-		return CalcResult{}, &ValidationError{"amount", "сумма вне диапазона продукта"}
+		return Quote{}, &ValidationError{"amount", "сумма вне диапазона продукта"}
 	}
 	if term < p.MinTerm || term > p.MaxTerm {
-		return CalcResult{}, &ValidationError{"term_months", "срок вне диапазона продукта"}
+		return Quote{}, &ValidationError{"term_months", "срок вне диапазона продукта"}
 	}
-	pay := AnnuityPayment(amount, p.Rate, term)
-	total := pay * int64(term)
-	return CalcResult{p.ID, amount, term, p.Rate, pay, total, total - amount}, nil
+	return NewQuote(amount, p.Rate, term), nil
 }

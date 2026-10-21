@@ -16,6 +16,7 @@ COPY --from=build /out/api /api
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV HTTP_ADDR=:8080 \
     DATA_FILE=/data/applications.json \
+    USERS_FILE=/data/users.json \
     PIPELINE_STEP_DELAY=3s
 EXPOSE 8080
 VOLUME ["/data"]

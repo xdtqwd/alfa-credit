@@ -29,6 +29,7 @@ flowchart LR
     PIPE["pipeline.Worker<br/>фоновый конвейер"]
     SCR["scoring<br/>балльная модель + кредитная логика"]
     INT["integrations<br/>Registry (ЕГРЮЛ/ЕГРИП, ФНС)<br/>CreditBureau (БКИ)"]
+    AUTH["auth + AuthService<br/>сессии, PBKDF2, лимит попыток,<br/>профиль, реквизиты, баланс"]
     REPO["storage.Repository"]
   end
 
@@ -36,6 +37,7 @@ flowchart LR
 
   UI -- "HTTPS JSON" --> HTTP
   HTTP --> SVC --> DOM
+  HTTP --> AUTH --> REPO
   SVC --> REPO
   SVC --> INT
   PIPE --> REPO
@@ -68,7 +70,7 @@ flowchart LR
 
 | Требование | MVP | Цель |
 |---|---|---|
-| Безопасность | nonroot distroless, read-only FS, `cap_drop: ALL`, CSP, без внутренних ID в URL чужих заявок (404), лимит тела 64 КБ, токен банка с constant-time сравнением | OIDC/JWT, mTLS между сервисами, шифрование ПДн (152-ФЗ), Vault |
+| Безопасность | вход обязателен для оформления, подписания и оплаты; сессия в HttpOnly-cookie (SameSite=Strict, TTL 12 ч); проверка Origin против CSRF; пароли PBKDF2-SHA256 с солью; блокировка после 5 неудачных попыток по телефону и IP; nonroot distroless, read-only FS, `cap_drop: ALL`, CSP; чужие заявки отдают 404; лимит тела 64 КБ | OIDC/JWT, mTLS между сервисами, шифрование ПДн (152-ФЗ), Vault |
 | Надёжность | атомарная запись (tmp + rename), оптимистичная проверка статуса в worker, graceful shutdown, healthcheck | PostgreSQL + transactional outbox, идемпотентные консьюмеры |
 | Отказоустойчивость | ретрай шага конвейера на следующем тике | несколько реплик, circuit breaker на адаптерах, DLQ |
 | Масштабирование | stateless HTTP, worker отделён логически | HPA по lag'у Kafka, партиционирование по ID заявки |
@@ -94,7 +96,8 @@ stateDiagram-v2
   approved --> cancelled
   counter_offer --> cancelled
   signing --> issued: подписал ПЭП
-  issued --> [*]
+  issued --> closed: оплачены все платежи
+  closed --> [*]
   rejected --> [*]
   cancelled --> [*]
 ```

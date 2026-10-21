@@ -102,11 +102,11 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	case regErr != nil:
 		checks = append(checks, chk("registry", "ЕГРЮЛ/ЕГРИП", "fail", "Компания не найдена"))
 		next, comment = domain.StatusRejected, "Компания не найдена в реестре"
-		decision = &domain.Decision{Type: domain.DecisionRejected, Reasons: []string{"Компания не найдена в ЕГРЮЛ/ЕГРИП"}}
+		decision = &domain.Decision{Type: domain.DecisionRejected, Reasons: []string{"Мы не нашли компанию с ИНН " + a.INN + " в государственном реестре (ЕГРЮЛ/ЕГРИП)."}, Advice: []string{"Проверьте ИНН в профиле компании."}}
 	case company.Status != "active":
 		checks = append(checks, chk("registry", "ЕГРЮЛ/ЕГРИП", "fail", "Компания ликвидирована"))
 		next, comment = domain.StatusRejected, "Компания не действует по данным реестра"
-		decision = &domain.Decision{Type: domain.DecisionRejected, Reasons: []string{"Компания ликвидирована по данным ЕГРЮЛ"}}
+		decision = &domain.Decision{Type: domain.DecisionRejected, Reasons: []string{"По данным государственного реестра (ЕГРЮЛ) компания " + company.Name + " ликвидирована. Кредит можно выдать только действующей компании."}, Advice: []string{"Если компания действует, а в реестре ошибка — обратитесь в налоговую и подайте заявку после исправления."}}
 	default:
 		checks = append(checks, chk("registry", "ЕГРЮЛ/ЕГРИП", "ok", "Компания действует, регистрация с "+company.RegDate))
 	}
@@ -123,9 +123,11 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 			fmt.Sprintf("Указано %s ₽, по данным ФНС — %s ₽", money(a.Financials.AnnualRevenue), money(company.RevenueLastYear))))
 		next = domain.StatusNeedInfo
 		comment = "Уточните выручку: она заметно выше данных ФНС"
-		decision = &domain.Decision{Type: domain.DecisionNeedInfo, Reasons: []string{
-			fmt.Sprintf("По данным ФНС выручка за прошлый год — %s ₽. Проверьте значение в анкете и отправьте снова.", money(company.RevenueLastYear)),
-		}}
+		decision = &domain.Decision{Type: domain.DecisionNeedInfo,
+			Reasons: []string{fmt.Sprintf("В анкете выручка за год — %s, а по данным налоговой за прошлый год — %s. Разница больше чем в полтора раза, поэтому мы не можем оценить заявку автоматически.",
+				domain.Money(a.Financials.AnnualRevenue), domain.Money(company.RevenueLastYear))},
+			Advice: []string{"Проверьте, не опечатались ли вы в выручке (лишний ноль — частая причина).", "Если выручка действительно выросла, укажите реальную цифру и отправьте анкету снова — мы пересчитаем."},
+		}
 	} else if next == domain.StatusScoring {
 		checks = append(checks, chk("revenue", "Сверка выручки с ФНС", "ok", "Расхождений нет"))
 	}

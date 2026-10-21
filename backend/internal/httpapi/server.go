@@ -10,8 +10,9 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
-	"regexp"
+	"net/url"
 	"time"
 
 	"github.com/xdtqwd/alfa-credit/internal/domain"
@@ -20,12 +21,15 @@ import (
 )
 
 type Server struct {
-	Svc       *service.Service
-	Repo      storage.Repository
-	Log       *slog.Logger
-	BankToken string
-	Static    fs.FS
-	Version   string
+	Svc  *service.Service
+	Auth *service.AuthService
+	// CookieSecure — флаг Secure для cookie сессии (true за HTTPS).
+	CookieSecure bool
+	Repo         storage.Repository
+	Log          *slog.Logger
+	BankToken    string
+	Static       fs.FS
+	Version      string
 }
 
 func (s *Server) Handler() http.Handler {
@@ -44,7 +48,13 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/products", s.products)
 	mux.HandleFunc("POST /api/v1/calc", s.calc)
-	mux.HandleFunc("GET /api/v1/companies/{inn}", s.client(s.company))
+	mux.HandleFunc("GET /api/v1/companies/{inn}", s.company)
+
+	mux.HandleFunc("POST /api/v1/auth/login", s.login)
+	mux.HandleFunc("POST /api/v1/auth/register", s.register)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	mux.HandleFunc("GET /api/v1/me", s.client(s.me))
+	mux.HandleFunc("PATCH /api/v1/me", s.client(s.updateMe))
 
 	mux.HandleFunc("POST /api/v1/applications", s.client(s.create))
 	mux.HandleFunc("GET /api/v1/applications", s.client(s.list))
@@ -54,12 +64,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/applications/{id}/accept", s.client(s.action(s.Svc.Accept)))
 	mux.HandleFunc("POST /api/v1/applications/{id}/cancel", s.client(s.action(s.Svc.Cancel)))
 	mux.HandleFunc("POST /api/v1/applications/{id}/sign", s.client(s.sign))
+	mux.HandleFunc("POST /api/v1/applications/{id}/pay", s.client(s.action(s.Svc.Pay)))
 
 	mux.HandleFunc("GET /api/v1/bank/applications", s.bank(s.bankList))
 
 	mux.Handle("GET /", http.FileServerFS(s.Static))
 
-	return s.recoverer(s.logging(securityHeaders(mux)))
+	return s.recoverer(s.logging(securityHeaders(sameOrigin(mux))))
 }
 
 // ---------- middleware ----------
@@ -68,18 +79,53 @@ type ctxKey string
 
 const clientKey ctxKey = "client"
 
-var clientIDRe = regexp.MustCompile(`^[A-Za-z0-9-]{8,64}$`)
+const sessionCookie = "sid"
 
-// client — демо-аутентификация по X-Client-ID. В проде: OIDC (Альфа ID) + JWT на API Gateway.
+// client — требует авторизованную сессию (HttpOnly cookie). Без входа нельзя оформить,
+// подписать или оплатить. В проде: OIDC (Альфа ID) на API Gateway.
 func (s *Server) client(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := r.Header.Get("X-Client-ID")
-		if !clientIDRe.MatchString(id) {
-			writeErr(w, 401, "unauthorized", "нужен заголовок X-Client-ID", "")
+		c, err := r.Cookie(sessionCookie)
+		if err != nil {
+			writeErr(w, 401, "unauthorized", "войдите, чтобы продолжить", "")
 			return
 		}
-		h(w, r.WithContext(context.WithValue(r.Context(), clientKey, id)))
+		uid, ok := s.Auth.Sessions.Get(c.Value)
+		if !ok {
+			s.clearCookie(w)
+			writeErr(w, 401, "unauthorized", "сессия истекла, войдите снова", "")
+			return
+		}
+		h(w, r.WithContext(context.WithValue(r.Context(), clientKey, uid)))
 	}
+}
+
+// sameOrigin — защита от CSRF: изменяющие запросы принимаются только со своего origin
+// (дополнительно к SameSite=Strict у cookie).
+func sameOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if o := r.Header.Get("Origin"); o != "" {
+				u, err := url.Parse(o)
+				if err != nil || u.Host != r.Host {
+					writeErr(w, 403, "forbidden", "запрос с чужого источника", "")
+					return
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) setCookie(w http.ResponseWriter, tok string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: tok, Path: "/", HttpOnly: true, Secure: s.CookieSecure,
+		SameSite: http.SameSiteStrictMode, MaxAge: int(s.Auth.Sessions.TTL.Seconds()),
+	})
+}
+
+func (s *Server) clearCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1, SameSite: http.SameSiteStrictMode})
 }
 
 func (s *Server) bank(h http.HandlerFunc) http.HandlerFunc {
@@ -141,6 +187,77 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ---------- auth handlers ----------
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Phone    string `json:"phone"`
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	u, tok, err := s.Auth.Login(r.Context(), in.Phone, in.Password, clientIP(r))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.setCookie(w, tok)
+	writeJSON(w, 200, u)
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	var in service.RegisterInput
+	if !decode(w, r, &in) {
+		return
+	}
+	u, tok, err := s.Auth.Register(r.Context(), in)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.setCookie(w, tok)
+	writeJSON(w, 201, u)
+}
+
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		s.Auth.Logout(c.Value)
+	}
+	s.clearCookie(w)
+	w.WriteHeader(204)
+}
+
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	u, err := s.Auth.Me(r.Context(), clientID(r))
+	if err != nil {
+		s.fail(w, domain.ErrUnauthorized)
+		return
+	}
+	writeJSON(w, 200, u)
+}
+
+func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
+	var p service.ProfilePatch
+	if !decode(w, r, &p) {
+		return
+	}
+	u, err := s.Auth.UpdateProfile(r.Context(), clientID(r), p)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, 200, u)
 }
 
 // ---------- handlers ----------
@@ -287,6 +404,14 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeErr(w, 404, "not_found", "заявка не найдена", "")
 	case errors.Is(err, domain.ErrCompanyNotFound):
 		writeErr(w, 404, "company_not_found", "компания с таким ИНН не найдена", "inn")
+	case errors.Is(err, domain.ErrUnauthorized):
+		writeErr(w, 401, "unauthorized", "войдите, чтобы продолжить", "")
+	case errors.Is(err, domain.ErrInvalidCredentials):
+		writeErr(w, 401, "invalid_credentials", "неверный телефон или пароль", "password")
+	case errors.Is(err, domain.ErrTooManyAttempts):
+		writeErr(w, 429, "too_many_attempts", "слишком много попыток входа, подождите минуту", "")
+	case errors.Is(err, domain.ErrInsufficientFunds):
+		writeErr(w, 422, "insufficient_funds", "недостаточно средств на расчётном счёте", "balance")
 	case errors.Is(err, domain.ErrInvalidTransition):
 		writeErr(w, 409, "invalid_transition", "действие недоступно в текущем статусе заявки", "")
 	default:
@@ -296,6 +421,19 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	// все деньги по заявке считает сервер (domain.Quote/Schedule) — дополняем перед отдачей
+	switch x := v.(type) {
+	case *domain.Application:
+		x.Enrich()
+	case []*domain.Application:
+		for _, a := range x {
+			a.Enrich()
+		}
+	case []bankRow:
+		for _, r := range x {
+			r.Enrich()
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)

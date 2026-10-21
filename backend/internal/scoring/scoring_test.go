@@ -1,6 +1,7 @@
 package scoring
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -60,5 +61,37 @@ func TestTransitions(t *testing.T) {
 	}
 	if domain.CanTransition(domain.StatusDraft, domain.StatusIssued) {
 		t.Fatal("draft → issued must be forbidden")
+	}
+}
+
+// Единый расчёт: сумма графика = Total, последний платёж закрывает долг в ноль.
+func TestQuoteConsistency(t *testing.T) {
+	q := domain.NewQuote(3_000_000, 19.9, 24)
+	s := domain.Schedule(3_000_000, 19.9, 24)
+	var sum int64
+	for _, i := range s {
+		sum += i.Payment
+	}
+	if sum != q.Total || s[len(s)-1].Rest != 0 || q.Overpayment != q.Total-3_000_000 {
+		t.Fatalf("quote %+v, schedule sum %d, last rest %d", q, sum, s[len(s)-1].Rest)
+	}
+}
+
+func TestCounterOfferExplainsWithFormData(t *testing.T) {
+	p, _ := domain.FindProduct("business-dev")
+	a := app(20_000_000, 18_000_000, 200_000, 24, "2018-07-01")
+	r := Evaluate(a, p, &domain.BureauReport{Score: 760}, now)
+	d := r.Decision
+	if d.Type != domain.DecisionCounter || d.Requested == nil || d.Requested.Amount != 20_000_000 || d.Overpayment <= 0 {
+		t.Fatalf("decision %+v", d)
+	}
+	found := false
+	for _, s := range d.Reasons {
+		if strings.Contains(s, "1 500 000 ₽") { // месячная выручка из анкеты
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("reasons must cite form data: %q", d.Reasons)
 	}
 }

@@ -1,3 +1,4 @@
 .env
 backend/data/
 *.tmp
+coverage.out

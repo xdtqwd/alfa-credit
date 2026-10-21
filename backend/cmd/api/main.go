@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/xdtqwd/alfa-credit/internal/auth"
 	"github.com/xdtqwd/alfa-credit/internal/httpapi"
 	"github.com/xdtqwd/alfa-credit/internal/integrations"
 	"github.com/xdtqwd/alfa-credit/internal/pipeline"
@@ -56,12 +57,30 @@ func run(log *slog.Logger, addr string) error {
 		return fmt.Errorf("PIPELINE_STEP_DELAY: %w", err)
 	}
 
+	ttl, err := time.ParseDuration(env("SESSION_TTL", "12h"))
+	if err != nil {
+		return fmt.Errorf("SESSION_TTL: %w", err)
+	}
+
 	repo, err := storage.NewFileStore(env("DATA_FILE", "./data/applications.json"))
 	if err != nil {
 		return err
 	}
+	users, err := storage.NewUserFileStore(env("USERS_FILE", "./data/users.json"))
+	if err != nil {
+		return err
+	}
 	registry := integrations.MockRegistry{}
-	svc := &service.Service{Repo: repo, Registry: registry, Now: time.Now}
+	svc := &service.Service{Repo: repo, Users: users, Registry: registry, Now: time.Now}
+	authSvc := &service.AuthService{
+		Users: users, Registry: registry, Now: time.Now,
+		Sessions: auth.NewSessions(ttl), Limiter: auth.NewLimiter(5, time.Minute),
+	}
+	if env("SEED_DEMO", "true") == "true" {
+		if err := authSvc.SeedDemo(context.Background()); err != nil {
+			return fmt.Errorf("seed demo users: %w", err)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -75,7 +94,7 @@ func run(log *slog.Logger, addr string) error {
 	srv := &http.Server{
 		Addr: addr,
 		Handler: (&httpapi.Server{
-			Svc: svc, Repo: repo, Log: log, Static: web.Static(), Version: version,
+			Svc: svc, Auth: authSvc, CookieSecure: env("COOKIE_SECURE", "false") == "true", Repo: repo, Log: log, Static: web.Static(), Version: version,
 			BankToken: env("BANK_TOKEN", "demo-bank"),
 		}).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,

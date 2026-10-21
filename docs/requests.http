@@ -1,6 +1,5 @@
 ### Коллекция запросов (VS Code REST Client / JetBrains HTTP Client)
 @host = http://localhost:8080
-@cid = demo-client-0001
 
 ### Каталог
 GET {{host}}/api/v1/products
@@ -11,14 +10,21 @@ Content-Type: application/json
 
 {"product_id":"business-dev","amount":3000000,"term_months":24}
 
+### 0. Вход (cookie sid сохранится клиентом автоматически)
+POST {{host}}/api/v1/auth/login
+Content-Type: application/json
+
+{"phone":"79000000001","password":"demo1234"}
+
+### Профиль, реквизиты, баланс
+GET {{host}}/api/v1/me
+
 ### Компания по ИНН
 GET {{host}}/api/v1/companies/7701234567
-X-Client-ID: {{cid}}
 
 ### 1. Анкета сразу из калькулятора
 # @name create
 POST {{host}}/api/v1/applications
-X-Client-ID: {{cid}}
 Content-Type: application/json
 
 {"product_id":"business-dev","amount":3000000,"term_months":24}
@@ -28,7 +34,6 @@ Content-Type: application/json
 
 ### 2. Автосохранение анкеты
 PATCH {{host}}/api/v1/applications/{{id}}
-X-Client-ID: {{cid}}
 Content-Type: application/json
 
 {
@@ -40,22 +45,30 @@ Content-Type: application/json
 
 ### 3. Отправить
 POST {{host}}/api/v1/applications/{{id}}/submit
-X-Client-ID: {{cid}}
 
 ### 4. Прогресс (повторять, пока статус не станет approved / counter_offer / ...)
 GET {{host}}/api/v1/applications/{{id}}
-X-Client-ID: {{cid}}
 
 ### 5. Принять условия
 POST {{host}}/api/v1/applications/{{id}}/accept
-X-Client-ID: {{cid}}
 
 ### 6. Подписать и получить деньги
 POST {{host}}/api/v1/applications/{{id}}/sign
-X-Client-ID: {{cid}}
 Content-Type: application/json
 
 {"confirm": true}
+
+### 7. Оплатить очередной платёж
+POST {{host}}/api/v1/applications/{{id}}/pay
+
+### Без входа — 401
+POST {{host}}/api/v1/auth/logout
+
+###
+POST {{host}}/api/v1/applications
+Content-Type: application/json
+
+{"product_id":"business-dev"}
 
 ### Кабинет банка
 GET {{host}}/api/v1/bank/applications

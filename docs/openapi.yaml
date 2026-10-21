@@ -3,11 +3,14 @@ info:
   title: Кредитный кабинет предпринимателя — API
   version: 0.1.0
   description: |
-    REST API кредитного конвейера для МСБ. Клиентские методы требуют заголовок `X-Client-ID`
-    (демо-идентификация; в проде — OIDC на API Gateway). Методы банка — `X-Bank-Token`.
+    REST API кредитного конвейера для МСБ. Клиентские методы требуют входа: `POST /api/v1/auth/login`
+    ставит HttpOnly-cookie `sid` (SameSite=Strict, TTL 12 ч). Без сессии нельзя оформить, подписать или оплатить (401).
+    Изменяющие запросы с чужого Origin отклоняются (403). Методы банка — заголовок `X-Bank-Token`.
+    В проде — OIDC (Альфа ID) на API Gateway.
 servers:
   - url: http://localhost:8080
 tags:
+  - name: auth
   - name: catalog
   - name: applications
   - name: bank
@@ -115,6 +118,50 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
         '409': { $ref: '#/components/responses/Error' }
 
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Вход по телефону и паролю (5 неудачных попыток → блокировка на минуту)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [phone, password], properties: { phone: { type: string, example: '+7 900 000-00-01' }, password: { type: string, example: demo1234 } } } } } }
+      responses:
+        '200': { description: OK, headers: { Set-Cookie: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Регистрация по ИНН — компания и реквизиты подтягиваются из реестра
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [phone, password, full_name, inn], properties: { phone: { type: string }, password: { type: string, minLength: 8 }, full_name: { type: string }, inn: { type: string }, email: { type: string } } } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '422': { $ref: '#/components/responses/Validation' }
+  /api/v1/auth/logout:
+    post: { tags: [auth], summary: Выход, responses: { '204': { description: No Content } } }
+  /api/v1/me:
+    get:
+      tags: [auth]
+      summary: Профиль, компания, реквизиты и баланс расчётного счёта
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [auth]
+      summary: Изменить почту или должность
+      security: [{ client: [] }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { email: { type: string }, position: { type: string } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } } }
+  /api/v1/applications/{id}/pay:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      tags: [applications]
+      summary: Оплатить очередной платёж по выданному кредиту со своего расчётного счёта
+      security: [{ client: [] }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { description: Недостаточно средств, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
   /api/v1/bank/applications:
     get:
       tags: [bank]
@@ -126,11 +173,26 @@ paths:
 
 components:
   securitySchemes:
-    client: { type: apiKey, in: header, name: X-Client-ID }
+    client: { type: apiKey, in: cookie, name: sid }
     bank: { type: apiKey, in: header, name: X-Bank-Token }
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: string } }
   responses:
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        phone: { type: string }
+        full_name: { type: string }
+        position: { type: string }
+        email: { type: string }
+        company: { $ref: '#/components/schemas/Company' }
+        requisites:
+          type: object
+          properties: { account: { type: string }, bank_name: { type: string }, bik: { type: string }, corr_account: { type: string }, kpp: { type: string } }
+        balance: { type: integer, description: 'остаток на расчётном счёте, ₽' }
+        created_at: { type: string, format: date-time }
+        last_login_at: { type: string, format: date-time }
     Error:
       description: Ошибка
       content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
@@ -149,7 +211,7 @@ components:
             field: { type: string }
     Status:
       type: string
-      enum: [draft, submitted, data_check, scoring, approved, counter_offer, need_info, rejected, signing, issued, cancelled]
+      enum: [draft, submitted, data_check, scoring, approved, counter_offer, need_info, rejected, signing, issued, closed, cancelled]
     Product:
       type: object
       properties:
@@ -163,6 +225,7 @@ components:
         max_term: { type: integer }
         default_amount: { type: integer }
         default_term: { type: integer }
+        default_payment: { type: integer, description: 'платёж при сумме и сроке по умолчанию (считает сервер)' }
         purposes: { type: array, items: { type: string } }
         badge: { type: string }
     CreateInput:
@@ -173,9 +236,11 @@ components:
         amount: { type: integer, example: 3000000 }
         term_months: { type: integer, example: 24 }
     CalcResult:
+      $ref: '#/components/schemas/Quote'
+    Quote:
       type: object
+      description: Единственный источник расчёта платежа (Go domain.Quote). Клиент не считает деньги сам.
       properties:
-        product_id: { type: string }
         amount: { type: integer }
         term_months: { type: integer }
         rate: { type: number }
@@ -236,7 +301,14 @@ components:
         term_months: { type: integer }
         rate: { type: number }
         monthly_payment: { type: integer }
-        reasons: { type: array, items: { type: string } }
+        total: { type: integer }
+        overpayment: { type: integer }
+        requested: { $ref: '#/components/schemas/Quote' }
+        reasons: { type: array, items: { type: string }, description: 'объяснение простыми словами на данных анкеты' }
+        advice: { type: array, items: { type: string }, description: 'что можно сделать (отказ, уточнение)' }
+    Installment:
+      type: object
+      properties: { n: { type: integer }, payment: { type: integer }, principal: { type: integer }, interest: { type: integer }, rest: { type: integer } }
     Event:
       type: object
       properties:
@@ -266,6 +338,10 @@ components:
         score: { type: integer }
         decision: { $ref: '#/components/schemas/Decision' }
         history: { type: array, items: { $ref: '#/components/schemas/Event' } }
+        quote: { $ref: '#/components/schemas/Quote' }
+        schedule: { type: array, items: { $ref: '#/components/schemas/Installment' }, description: 'график для выданного кредита' }
+        next_payment: { type: integer, description: 'сумма очередного платежа' }
+        payments: { type: array, items: { type: object, properties: { n: { type: integer }, at: { type: string, format: date-time }, amount: { type: integer } } } }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         status_changed_at: { type: string, format: date-time }

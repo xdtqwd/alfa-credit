@@ -8,33 +8,36 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="topbar__in">
-      <a class="brand" href="#/">
-        <span class="brand__mark" aria-hidden="true">₽</span>
-        <span class="brand__text"><b>Кредитный кабинет</b><small>Альфа Бизнес</small></span>
-      </a>
-      <nav class="topnav">
-        <a href="#/" data-nav="home">Главная</a>
-        <a href="#/apps" data-nav="apps">Мои заявки</a>
-        <a href="#/bank" data-nav="bank">Банк</a>
-      </nav>
-      <div class="profile" title="Демо-клиент">
-        <span class="profile__ava">ДК</span>
-        <span class="profile__name">Демо-клиент</span>
+  <header class="ahdr">
+    <div class="ahdr__in">
+      <a class="ahdr__logo" href="#/products" aria-label="На главную"><span class="ahdr__mark">₽</span><span class="ahdr__name"><b>Альфа Бизнес</b><small>Кредитный кабинет</small></span></a>
+      <nav class="ahdr__nav" id="hdrnav" aria-label="Разделы"></nav>
+      <div class="ahdr__right">
+        <button class="ahdr__ic" data-do="palette" aria-label="Поиск" title="Поиск (Ctrl K)"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+        <div class="dd" data-dd="bell" id="bell-dd" hidden><button class="dd__btn ahdr__ic" aria-label="Уведомления" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0112 0v5l2 2H4z"/><path d="M10 20a2 2 0 004 0"/></svg></button><div class="dd__panel dd__panel--right dd__panel--bell"></div></div>
+        <div class="auth-slot" id="auth-slot"></div>
+        <button class="ahdr__ic ahdr__burger" data-do="menu" aria-label="Меню" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       </div>
     </div>
   </header>
+  <div class="megamenu" id="megamenu" role="dialog" aria-modal="true" aria-label="Меню" hidden></div>
 
-  <section class="hotbar-wrap" aria-label="Быстрые действия">
-    <div class="hotbar" id="hotbar"></div>
-  </section>
 
   <main id="view" class="container"></main>
 
+  <footer class="a-foot">
+    <div class="a-foot__in">
+      <div class="a-foot__brand"><span class="ahdr__mark">₽</span><div><b>Альфа Бизнес · Кредитный кабинет</b><p>Прототип для хакатона «Альфа Будущее». Все компании, суммы и ставки синтетические, интеграции — локальные моки.</p></div></div>
+      <nav class="a-foot__links"><a href="#/products">Кредиты</a><a href="#" data-do="calc">Калькулятор</a><a href="#" data-do="goto" data-sec="how">Как получить</a><a href="#" data-do="goto" data-sec="faq">Вопросы</a><a href="#/bank">Кабинет банка</a></nav>
+    </div>
+  </footer>
+
   <div id="modal-root"></div>
+  <div id="notices" class="notices" aria-live="polite"></div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="app.js"></script>
+  <script src="nav.js"></script>
+  <script src="cabinet.js"></script>
 </body>
 </html>
