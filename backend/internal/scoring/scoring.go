@@ -20,11 +20,15 @@ const (
 	counterMarkup    = 1.5 // надбавка к ставке при контрпредложении, п.п.
 )
 
-type Factor struct {
-	Name    string `json:"name"`
-	Impact  int    `json:"impact"`
-	Explain string `json:"explain"` // для клиента, с цифрами из анкеты
-}
+// Factor — фактор балла (для клиента, с цифрами из анкеты); хранится в заявке.
+type Factor = domain.ScoreFactor
+
+// Пороги решения — экспортируются, чтобы клиент и банк видели шкалу.
+const (
+	ApproveThreshold = approveThreshold
+	RejectThreshold  = rejectThreshold
+	BaseScore        = baseScore
+)
 
 type Result struct {
 	Score    int
@@ -48,7 +52,7 @@ func Evaluate(a *domain.Application, p domain.Product, br *domain.BureauReport, 
 	var factors []Factor
 	add := func(name string, v int, explain string) {
 		score += v
-		factors = append(factors, Factor{name, v, explain})
+		factors = append(factors, Factor{Name: name, Impact: v, Explain: explain})
 	}
 
 	// 1. Срок жизни бизнеса

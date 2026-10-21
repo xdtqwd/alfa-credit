@@ -29,7 +29,7 @@ type harness struct {
 	svc   *service.Service
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T, opts ...func(*Server)) *harness {
 	t.Helper()
 	repo, _ := storage.NewFileStore("")
 	users, _ := storage.NewUserFileStore("")
@@ -41,7 +41,11 @@ func newHarness(t *testing.T) *harness {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}
-	ts := httptest.NewServer((&Server{Svc: svc, Auth: a, Repo: repo, Log: log, BankToken: "bank-secret", Static: static}).Handler())
+	srv := &Server{Svc: svc, Auth: a, Repo: repo, Log: log, BankToken: "bank-secret", Static: static}
+	for _, o := range opts {
+		o(srv)
+	}
+	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return &harness{t: t, ts: ts, repo: repo, users: users, svc: svc}
 }

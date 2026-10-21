@@ -46,14 +46,25 @@ const store = {
 // Сессия — в HttpOnly cookie (JS её не видит). Текущий пользователь — в ME.
 let ME = null;
 
+// Действия с деньгами и статусом заявки идут с Idempotency-Key: если связь оборвалась после
+// отправки, запрос безопасно повторяется с тем же ключом — сервер не выполнит его второй раз
+// (не будет двойного платежа или второй заявки), а вернёт сохранённый ответ.
+const IDEMPOTENT = /^\/applications(\/[^/]+\/(submit|accept|sign|pay|cancel))?$/;
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join(''));
+
 async function api(method, path, body, headers = {}) {
   if (navigator.onLine === false) throw Object.assign(new Error('Нет подключения к интернету'), { offline: true });
-  const res = await fetch('/api/v1' + path, {
+  const idem = method === 'POST' && IDEMPOTENT.test(path);
+  if (idem && !headers['Idempotency-Key']) headers = { ...headers, 'Idempotency-Key': newKey() };
+  const send = () => fetch('/api/v1' + path, {
     method,
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: body ? JSON.stringify(body) : undefined,
-  }).catch(() => { throw Object.assign(new Error('Нет связи с сервером'), { offline: true }); });
+  });
+  const res = await send()
+    .catch(() => (idem ? new Promise((r) => setTimeout(r, 700)).then(send) : Promise.reject()))
+    .catch(() => { throw Object.assign(new Error('Нет связи с сервером'), { offline: true }); });
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const e = new Error(data?.error?.message || res.statusText);
@@ -102,7 +113,10 @@ const I = {
   card: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
 };
-const icon = (n, size = 24) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+// Иконки дизайн-системы Альфы (icons.js); I — запасной контурный набор для того, чего в ней нет.
+const icon = (n, size = 24) => (typeof ALFA_ICONS !== 'undefined' && ALFA_ICONS[n])
+  ? `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" fill="currentColor" aria-hidden="true" focusable="false">${ALFA_ICONS[n]}</svg>`
+  : `<svg class="ic" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${I[n]}</svg>`;
 
 // ---------- domain dictionaries ----------
 const STATUS = {
@@ -355,7 +369,7 @@ async function viewHome(view) {
 
     <section class="a-sec" id="faq">
       <h2>Частые вопросы</h2>
-      <div class="a-faq">${FAQ.map(([q, a]) => `<details><summary>${q}${icon('chev', 22)}</summary><p>${a}</p></details>`).join('')}</div>
+      <div class="a-faq">${FAQ.map(([q, a], i) => acc({ key: 'faq-' + i, header: q, body: `<p>${a}</p>` })).join('')}</div>
     </section>`;
 
   const body = $('#calc-body');
@@ -674,7 +688,7 @@ async function viewStatus(view, id) {
           <div class="muted small">${esc(p.name)} · ${rub(a.amount)} на ${months(a.term_months)}${a.company ? ' · ' + esc(a.company.name) : ''}</div>
         </div>
       </div>
-      ${todoBanner(a)}
+        ${todoBanner(a)}
       <section class="card">
         <div class="row between"><h3>Прогресс заявки</h3><span class="muted small">${secs !== null ? `Решение принято за ${secs} сек` : ''}</span></div>
         <div class="tracker">${STAGES.map((s, i) => {
@@ -683,7 +697,7 @@ async function viewStatus(view, id) {
           if (a.status === 'rejected' && i === idx) cls = 'fail';
           if (working && i === idx) cls += ' spin';
           const mark = cls.startsWith('done') ? '✓' : cls === 'fail' ? '✕' : i + 1;
-          return `<div class="tstep ${cls}"><span class="tstep__dot">${mark}</span>${s}</div>`;
+          return `<div class="tstep ${cls}"><span class="tstep__dot">${mark}</span><span class="tstep__t">${s}</span></div>`;
         }).join('')}</div>
         ${working ? `<div class="now-doing"><span class="spinner"></span>${DOING[a.status]}</div>` : ''}
       </section>
@@ -695,7 +709,7 @@ async function viewStatus(view, id) {
           ${[...a.history].reverse().map((h) => `<li><time>${timeOf(h.at)}</time><b>${STATUS[h.status][0]}</b><div class="muted small">${esc(h.comment)}</div></li>`).join('')}
         </ul></aside>
       </div>`;
-  };
+    };
 
   let a = await api('GET', '/applications/' + id);
   if (a.status === 'draft') return go('#/apply/' + id);
@@ -800,16 +814,16 @@ function decisionCard(a) {
       return box('blue', '<h2>Рассматриваем заявку</h2>', `<p class="muted">Вы запросили ${rub(a.amount)} на ${months(a.term_months)}${a.quote ? ` — ориентировочный платёж ${rub(a.quote.monthly_payment)} в месяц` : ''}. Статус обновится сам.</p>`);
     case 'approved': {
       const same = d.requested && d.requested.rate === d.rate;
-      return box('green', '<h2>Кредит одобрен</h2>', `${same ? offerGrid(d) : compareTable(d.requested, d)}${whyList(d)}
+      return box('green', '<h2>Кредит одобрен</h2>', `${same ? offerGrid(d) : compareTable(d.requested, d)}${whyList(d)}${scoreBlock(a)}
         <div class="row" style="margin-top:20px;flex-wrap:wrap"><button class="btn btn--red" data-act="accept">Принять и подписать</button><button class="btn btn--light" data-act="cancel">Отказаться</button></div>`);
     }
     case 'counter_offer':
-      return box('amber', '<h2>Можем выдать на других условиях</h2>', `<p class="muted" style="margin:6px 0 14px">Сравните, что вы просили и что предлагает банк:</p>${d.requested ? compareTable(d.requested, d) : offerGrid(d)}${whyList(d)}
+      return box('amber', '<h2>Можем выдать на других условиях</h2>', `<p class="muted" style="margin:6px 0 14px">Сравните, что вы просили и что предлагает банк:</p>${d.requested ? compareTable(d.requested, d) : offerGrid(d)}${whyList(d)}${scoreBlock(a)}
         <div class="row" style="margin-top:20px;flex-wrap:wrap"><button class="btn btn--red" data-act="accept">Принять новые условия</button><button class="btn btn--light" data-act="cancel">Отказаться</button></div>`);
     case 'need_info':
       return box('amber', '<h2>Нужно уточнить данные</h2>', `${whyList(d)}${adviceList(d)}<button class="btn btn--red" style="margin-top:20px" data-act="fix">Исправить анкету</button>`);
     case 'rejected':
-      return box('red', '<h2>Сейчас не можем выдать кредит</h2>', `${whyList(d)}${adviceList(d)}
+      return box('red', '<h2>Сейчас не можем выдать кредит</h2>', `${whyList(d)}${adviceList(d)}${scoreBlock(a)}
         <div class="row" style="margin-top:20px;flex-wrap:wrap"><button class="btn btn--dark" data-act="retry">Рассчитать меньшую сумму</button></div>`);
     case 'signing':
       return box('blue', '<h2>Документы готовы к подписанию</h2>', `${offerGrid(d)}<button class="btn btn--red" data-act="sign-open">Подписать документы</button>`);
@@ -898,8 +912,28 @@ async function viewBank(view) {
   view.innerHTML = `
     <div class="section-title" style="margin-top:0"><div><h1>Кабинет сотрудника банка</h1><div class="muted small">Все заявки конвейера в реальном времени · обновление каждые 2 сек</div></div>
       <span class="pill pill--green">Live</span></div>
+    <div id="bank-plat" class="plat" aria-label="Состояние платформы"></div>
     <div id="bank-body"><div class="skeleton"></div></div>`;
-  const load = async () => draw(await api('GET', '/bank/applications', null, { 'X-Bank-Token': token }));
+  const CACHE_NAMES = { registry: 'ЕГРЮЛ/ФНС', bureau: 'БКИ', calc: 'калькулятор', sessions: 'сессии' };
+  const plat = (p) => {
+    const el = $('#bank-plat');
+    if (!el) return;
+    const chip = (ok, label, value) => `<span class="plat__chip ${ok ? 'ok' : 'warn'}"><i></i>${label}${value != null ? `<b>${value}</b>` : ''}</span>`;
+    const caches = (p.caches || []).filter((c) => CACHE_NAMES[c.name] && c.hits + c.misses >= 20)
+      .map((c) => chip(true, 'Кэш ' + CACHE_NAMES[c.name], Math.round(c.hit_rate * 100) + '%')).join('');
+    el.innerHTML = chip(true, 'Хранилище', p.storage === 'postgres' ? 'PostgreSQL' : 'файлы')
+      + chip(true, 'Шина событий', p.bus === 'kafka' ? 'Kafka' : 'in-memory')
+      + (p.outbox_pending != null ? chip(p.outbox_pending < 50, 'Outbox в очереди', p.outbox_pending) : '')
+      + chip(true, 'Событий отправлено', p.events_published) + caches;
+  };
+  const load = async () => {
+    const [rows, p] = await Promise.all([
+      api('GET', '/bank/applications?limit=200', null, { 'X-Bank-Token': token }),
+      api('GET', '/bank/platform', null, { 'X-Bank-Token': token }).catch(() => null),
+    ]);
+    draw(rows);
+    if (p) plat(p);
+  };
   await load();
   later(() => load().catch(() => {}), 2000);
 }
@@ -1293,10 +1327,14 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 window.addEventListener('hashchange', render);
-(async () => {
+// Старт — только когда выполнены все скрипты (nav.js, cabinet.js, score.js):
+// иначе быстрый ответ /me приходил раньше, чем загружался nav.js, и страница оставалась пустой
+// («paintAuthSlot is not defined»).
+async function boot() {
   try { ME = await api('GET', '/me'); } catch { ME = null; }
   paintAuthSlot();
   await pollIsland(true);
   setInterval(() => pollIsland(), 2500);
   render();
-})();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();

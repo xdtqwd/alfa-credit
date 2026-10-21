@@ -2,7 +2,7 @@
 // Запуск: сервер должен работать на BASE_URL (по умолчанию http://localhost:8080)
 //   PIPELINE_STEP_DELAY=1s make run   # в одном терминале
 //   make e2e                          # в другом (нужны Node 18+ и `npm i -g playwright`)
-import { chromium } from 'playwright';
+import { chromium, devices } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
 const PASS = 'demo1234';
@@ -313,6 +313,94 @@ async function apiAs(page, method, path, body) {
     assert(norm(await page.inputValue('#apply-calc [data-calc=term-text]')) === '12 месяцев', 'срок овердрафта — 12 месяцев');
     await page.click('[data-prod="business-dev"]');
     await page.waitForSelector('#apply-calc input[type=range][data-calc=term]');
+  });
+
+  await test('Телефон: меню профиля открывается касанием на экране (кабинет и главная), не закрывается при прокрутке', async (page, ctx) => {
+    const mctx = await ctx.browser().newContext({ ...devices['iPhone 13'] });
+    const m = await mctx.newPage();
+    try {
+      await login(m, '79000000001');
+      const vp = m.viewportSize();
+      const check = async (where) => {
+        await m.tap('#auth-slot .ahdr__user');
+        await m.waitForSelector('.dd[data-dd="me"].open .pn-me');
+        const r = await m.locator('.dd[data-dd="me"] .dd__panel').boundingBox();
+        assert(r && r.y >= 0 && r.y + 60 < vp.height && r.x >= 0 && r.x + r.width <= vp.width, `${where}: меню за пределами экрана ${JSON.stringify(r)}`);
+        assert(await m.locator('.dd[data-dd="me"] .pn-me').isVisible(), `${where}: блок с ФИО не виден`);
+      };
+      await m.goto(BASE + '/#/'); await m.waitForSelector('.mx-title');
+      await check('кабинет');
+      await m.mouse.wheel(0, 300); await m.waitForTimeout(400);
+      assert(await m.locator('.dd[data-dd="me"].open').count() === 1, 'меню закрылось при прокрутке');
+      await m.tap('.mx-title');
+      await m.waitForFunction(() => !document.querySelector('.dd[data-dd="me"].open'));
+      await m.goto(BASE + '/#/products'); await m.waitForSelector('.a-hero h1');
+      await check('главная');
+      await m.tap('.dd[data-dd="me"] .pn-me');
+      await m.waitForSelector('.mx-title');
+    } finally { await mctx.close(); }
+  });
+
+  await test('Разбор балла: одобрение — шкала с отметкой и плюсы в факторах', async (page) => {
+    await login(page, '79000000001');
+    await page.click('.mx-new [data-do=apply]');
+    await fillAndSubmit(page);
+    await page.waitForSelector('.decision--green', { timeout: 20000 });
+    const score = norm(await page.textContent('.acc--score'));
+    assert(score.includes('зона одобрения') && score.includes('Стартовый балл') && /\+\d+/.test(score), 'нет разбора балла: ' + score.slice(0, 120));
+    assert(await page.locator('.acc--score .sbar__mark').isVisible(), 'на шкале нет отметки балла');
+    assert(await page.locator('a[href="#/scenarios"], .a-scn-cta').count() === 0, 'ссылки на «Сценарии проверки» должны быть убраны');
+  });
+
+  await test('Разбор балла: отказ — минусы в факторах; аккордеон сворачивается', async (page) => {
+    await login(page, '79000000003');
+    await page.click('.mx-new [data-do=apply]');
+    await fillAndSubmit(page);
+    await page.waitForSelector('.decision--red', { timeout: 20000 });
+    assert(await page.locator('.acc--score .f-minus').count() >= 1, 'в разборе нет минусов');
+    assert(norm(await page.textContent('.acc--score')).includes('зона отказа'), 'нет зоны отказа');
+    const head = page.locator('.acc--score > .acc__head');
+    assert(await head.getAttribute('aria-expanded') === 'true', 'разбор должен быть раскрыт');
+    await head.click();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('.acc--score > .acc__body')).visibility === 'hidden');
+    assert(await head.getAttribute('aria-expanded') === 'false', 'aria-expanded не обновился');
+  });
+
+  await test('Узкие экраны: меню «Ещё» и прогресс заявки не вылезают и не наезжают', async (page) => {
+    await login(page, '79000000003');
+    await page.click('.mx-new [data-do=apply]');
+    await page.waitForSelector('#rev');
+    const id = page.url().split('/').pop();
+    for (const w of [768, 390]) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.goto(BASE + '/#/products'); await page.waitForSelector('.a-hero');
+      await page.waitForTimeout(2700); // заявка попала в «Сейчас»
+      await page.locator('[data-do=menu]:visible').first().click();
+      await page.waitForSelector('#megamenu.open .mm-card');
+      const bad = await page.evaluate(() => { const m = document.getElementById('megamenu').getBoundingClientRect(); return [...document.querySelectorAll('#megamenu .mm-card')].filter((c) => { const r = c.getBoundingClientRect(); return r.right > m.right + 1 || r.left < m.left - 1; }).length; });
+      assert(bad === 0, `${w}px: карточки «Сейчас» вылезают за меню`);
+      await page.keyboard.press('Escape');
+    }
+    await page.goto(BASE + '/#/apply/' + id); await page.waitForSelector('#rev');
+    await page.click('[data-act=use-fns]'); await page.check('#consent');
+    await page.waitForFunction(() => document.querySelector('#s-saved')?.textContent === 'Сохранено');
+    await page.click('#submit'); await page.waitForSelector('.tracker');
+    const overlap = await page.evaluate(() => { const ls = [...document.querySelectorAll('.tstep__t')].map((e) => e.getBoundingClientRect()); return ls.some((a, i) => i && a.left < ls[i - 1].right - 1 && a.top < ls[i - 1].bottom - 1 && ls[i - 1].top < a.bottom - 1); });
+    assert(!overlap, 'подписи этапов наезжают друг на друга');
+  });
+
+  await test('Платформа: действия с деньгами идут с Idempotency-Key, кабинет банка показывает инфраструктуру', async (page) => {
+    await login(page, '79000000001');
+    const keys = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /\/applications(\/[^/]+\/(submit|accept|sign|pay))?$/.test(r.url())) keys.push(r.headers()['idempotency-key']); });
+    await page.click('.mx-new [data-do=apply]');
+    await fillAndSubmit(page);
+    assert(keys.length >= 2 && keys.every((k) => k && k.length >= 16), 'POST-действия должны идти с Idempotency-Key: ' + JSON.stringify(keys));
+    assert(new Set(keys).size === keys.length, 'у каждого действия свой ключ');
+    await page.goto(BASE + '/#/bank');
+    await page.waitForSelector('#bank-plat .plat__chip');
+    const plat = norm(await page.textContent('#bank-plat'));
+    assert(plat.includes('Хранилище') && plat.includes('Шина событий'), 'нет состояния платформы: ' + plat);
   });
 
   await test('Чужую заявку открыть нельзя', async (page, ctx) => {

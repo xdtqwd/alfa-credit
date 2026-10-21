@@ -94,7 +94,7 @@ async function fillAndSubmit(page) {
     const appUrl = page.url();
     await page.goto(BASE + '/#/bank');
     await page.waitForSelector('table.bank');
-    await caption(page, 'Кабинет сотрудника банка: та же заявка идёт по конвейеру в реальном времени', 0);
+    await caption(page, 'Кабинет сотрудника банка: заявка идёт по конвейеру — события через Kafka, данные в PostgreSQL', 0);
     await page.waitForFunction(() => /Одобрено|Контрпредложение|Отказ|Уточнение/.test(document.querySelector('table.bank tbody tr')?.textContent || ''), null, { timeout: 30000 });
     await caption(page, 'Скоринг принял решение: балл, условия и причина видны банку', 3000);
 
@@ -134,7 +134,7 @@ async function fillAndSubmit(page) {
     await page.waitForSelector('.decision--red', { timeout: 30000 });
     await page.locator('.decision').scrollIntoViewIfNeeded();
     await caption(page, 'Отказ не «чёрный ящик»: причина на данных анкеты и что можно сделать', 4500);
-    await caption(page, 'Без платных API и подписок · один Docker-контейнер · обычный ПК', 3000);
+    await caption(page, 'Без платных API и подписок · PostgreSQL + Kafka в одном docker compose · обычный ПК', 3000);
     await caption(page, '', 0);
   } finally {
     const video = page.video();

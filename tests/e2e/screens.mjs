@@ -103,8 +103,21 @@ const top = async (page) => { await page.evaluate(() => window.scrollTo(0, 0)); 
   await page.waitForSelector('.decision--red', { timeout: 30000 });
   await page.locator('.decision').scrollIntoViewIfNeeded(); await sleep(400);
   await shot(page, 'reject', { clip: await page.locator('.decision').boundingBox() });
-  await page.goto(BASE + '/#/bank'); await page.waitForSelector('table.bank tbody tr'); await sleep(800);
+  await page.goto(BASE + '/#/bank'); await page.waitForSelector('table.bank tbody tr'); await sleep(2500);
   await shot(page, 'bank');
+  await shot(page, 'bank-platform', { clip: { x: 0, y: 70, width: 1440, height: 330 } });
+  await ctx.close();
+}
+
+// разбор балла
+{
+  const { ctx, page } = await session();
+  await login(page, '79000000002');
+  await page.click('.mx-new [data-do=apply]');
+  await fill(page); await submit(page);
+  await page.waitForSelector('.decision--green', { timeout: 30000 });
+  await page.locator('.acc--score').scrollIntoViewIfNeeded(); await sleep(500);
+  await shot(page, 'score', { clip: await page.locator('.acc--score').boundingBox() });
   await ctx.close();
 }
 

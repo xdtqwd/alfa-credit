@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -32,23 +33,24 @@ func TestSessionsTTL(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := NewSessions(time.Hour)
 	s.Now = func() time.Time { return now }
-	tok := s.Create("u1")
+	ctx := context.Background()
+	tok, _ := s.Create(ctx, "u1")
 	if len(tok) != 64 {
 		t.Fatalf("token must be 256-bit hex, got %d chars", len(tok))
 	}
-	if uid, ok := s.Get(tok); !ok || uid != "u1" {
+	if uid, ok := s.Get(ctx, tok); !ok || uid != "u1" {
 		t.Fatal("fresh session must resolve")
 	}
-	if _, ok := s.Get("forged"); ok {
+	if _, ok := s.Get(ctx, "forged"); ok {
 		t.Fatal("unknown token resolved")
 	}
 	now = now.Add(61 * time.Minute)
-	if _, ok := s.Get(tok); ok {
+	if _, ok := s.Get(ctx, tok); ok {
 		t.Fatal("expired session must not resolve")
 	}
-	tok2 := s.Create("u2")
-	s.Delete(tok2)
-	if _, ok := s.Get(tok2); ok {
+	tok2, _ := s.Create(ctx, "u2")
+	s.Delete(ctx, tok2)
+	if _, ok := s.Get(ctx, tok2); ok {
 		t.Fatal("deleted session must not resolve")
 	}
 }

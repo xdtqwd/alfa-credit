@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -51,6 +52,23 @@ func VerifyPassword(encoded, pw string) bool {
 
 // ---------- сессии ----------
 
+// SessionStore — хранилище сессий. В PostgreSQL-режиме сессии лежат в БД (pgstore.Sessions),
+// поэтому любой экземпляр API принимает cookie, выданную другим, — сервис горизонтально масштабируется.
+type SessionStore interface {
+	Create(ctx context.Context, userID string) (string, error)
+	Get(ctx context.Context, token string) (string, bool)
+	Delete(ctx context.Context, token string)
+	Lifetime() time.Duration
+}
+
+// NewToken — случайный 256-битный токен сессии.
+func NewToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// Sessions — сессии в памяти процесса (локальный режим и тесты).
 type session struct {
 	userID  string
 	expires time.Time
@@ -67,18 +85,18 @@ func NewSessions(ttl time.Duration) *Sessions {
 	return &Sessions{m: map[string]session{}, TTL: ttl, Now: time.Now}
 }
 
+func (s *Sessions) Lifetime() time.Duration { return s.TTL }
+
 // Create выпускает случайный 256-битный токен сессии.
-func (s *Sessions) Create(userID string) string {
-	b := make([]byte, 32)
-	_, _ = rand.Read(b)
-	tok := hex.EncodeToString(b)
+func (s *Sessions) Create(_ context.Context, userID string) (string, error) {
+	tok := NewToken()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.m[tok] = session{userID: userID, expires: s.Now().Add(s.TTL)}
-	return tok
+	return tok, nil
 }
 
-func (s *Sessions) Get(token string) (string, bool) {
+func (s *Sessions) Get(_ context.Context, token string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ss, ok := s.m[token]
@@ -92,7 +110,7 @@ func (s *Sessions) Get(token string) (string, bool) {
 	return ss.userID, true
 }
 
-func (s *Sessions) Delete(token string) {
+func (s *Sessions) Delete(_ context.Context, token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, token)

@@ -2,17 +2,40 @@ THIRD PARTY NOTICES — alfa-credit
 
 Runtime-зависимости
 -------------------
-Сервис написан на стандартной библиотеке Go и не использует сторонних Go-модулей
-(в go.mod нет require). Фронтенд — vanilla HTML/CSS/JS, без npm-пакетов и CDN;
-используются системные шрифты.
+Сервис написан на стандартной библиотеке Go плюс два драйвера (версии зафиксированы в go.mod/go.sum).
+Фронтенд — vanilla HTML/CSS/JS, без npm-пакетов и CDN; используются системные шрифты.
 
 - Go toolchain 1.24 — BSD-3-Clause — https://go.dev/LICENSE
+- github.com/lib/pq v1.10.9 — MIT — https://github.com/lib/pq — драйвер PostgreSQL
+- github.com/twmb/franz-go v1.18.0 и pkg/kmsg v1.9.0 — BSD-3-Clause — https://github.com/twmb/franz-go — клиент Apache Kafka
+- github.com/klauspost/compress v1.17.8 — BSD-3-Clause / Apache-2.0 / MIT (по пакетам) — https://github.com/klauspost/compress — сжатие сообщений Kafka (транзитивно)
+- github.com/pierrec/lz4/v4 v4.1.21 — BSD-3-Clause — https://github.com/pierrec/lz4 — сжатие LZ4 (транзитивно)
 - Docker-образ golang:1.24-alpine (только сборка) — https://hub.docker.com/_/golang
 - Docker-образ gcr.io/distroless/static-debian12:nonroot — Apache-2.0 — https://github.com/GoogleContainerTools/distroless
 
+Инфраструктура в docker-compose (бесплатное ПО с открытым кодом, без подписок)
+------------------------------------------------------------------------------
+- postgres:16-alpine — PostgreSQL License — https://www.postgresql.org/about/licence/
+- apache/kafka:3.8.1 — Apache-2.0 — https://kafka.apache.org (режим KRaft, без ZooKeeper)
+- provectuslabs/kafka-ui:v0.7.2 — Apache-2.0 — https://github.com/provectus/kafka-ui (только профиль tools, по желанию)
+
+Иконки (включены в поставку)
+---------------------------
+- @alfalab/icons-glyph 2.293.0 — MIT — https://github.com/core-ds/icons
+  Иконки дизайн-системы Альфа-Банка (Core Components), размер M 24×24. В web/static/icons.js
+  скопированы только SVG-пути 27 используемых иконок (Add, Calculator, Bank, Document, User, Wallet и др.).
+
+Ориентиры дизайна (код не включён)
+----------------------------------
+- Core Components Альфа-Банка (@alfalab/core-components, MIT) — https://github.com/core-ds/core-components
+  Аккордеон (web/static/score.js) повторяет поведение @alfalab/core-components-accordion:
+  заголовок + шеврон справа, анимация высоты 400 мс с теми же кривыми, отступ контента 12 px.
+  Реализация своя, на vanilla JS, без React и без кода библиотеки.
+
 Инструменты разработки (не входят в поставку)
 ---------------------------------------------
-- Playwright / Chromium — Apache-2.0 / BSD — автотесты и скриншоты UI
+- Playwright / Chromium — Apache-2.0 / BSD — автотесты, скриншоты и демо-видео UI
+- franz-go pkg/kfake — BSD-3-Clause — Kafka-совместимый брокер в памяти для интеграционных тестов без Docker
 
 Смоделированные интеграции (моки, без сетевых вызовов)
 ------------------------------------------------------

@@ -53,6 +53,15 @@ var transitions = map[Status][]Status{
 	StatusIssued:       {StatusClosed},
 }
 
+// KnownStatus — существует ли такой статус (валидация фильтров API).
+func KnownStatus(s Status) bool {
+	if s == StatusClosed || s == StatusRejected || s == StatusCancelled {
+		return true
+	}
+	_, ok := transitions[s]
+	return ok
+}
+
 // CanTransition проверяет переход по диаграмме состояний (docs/ARCHITECTURE.md).
 func CanTransition(from, to Status) bool {
 	return slices.Contains(transitions[from], to)
@@ -140,6 +149,13 @@ func (d *Decision) SetOffer(q Quote) {
 	d.MonthlyPayment, d.Total, d.Overpayment = q.MonthlyPayment, q.Total, q.Overpayment
 }
 
+// ScoreFactor — один фактор балльной модели: сколько баллов дал и почему (простыми словами).
+type ScoreFactor struct {
+	Name    string `json:"name"`
+	Impact  int    `json:"impact"`
+	Explain string `json:"explain"`
+}
+
 type Event struct {
 	Status  Status    `json:"status"`
 	At      time.Time `json:"at"`
@@ -164,6 +180,7 @@ type Application struct {
 	Bureau     *BureauReport `json:"bureau,omitempty"`
 	Checks     []Check       `json:"checks"`
 	Score      *int          `json:"score,omitempty"`
+	Factors    []ScoreFactor `json:"factors,omitempty"` // из чего сложился балл — для клиента и банка
 	Decision   *Decision     `json:"decision,omitempty"`
 	History    []Event       `json:"history"`
 	Payments   []Payment     `json:"payments"`

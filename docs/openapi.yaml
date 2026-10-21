@@ -1,12 +1,28 @@
 openapi: 3.0.3
 info:
   title: Кредитный кабинет предпринимателя — API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     REST API кредитного конвейера для МСБ. Клиентские методы требуют входа: `POST /api/v1/auth/login`
     ставит HttpOnly-cookie `sid` (SameSite=Strict, TTL 12 ч). Без сессии нельзя оформить, подписать или оплатить (401).
     Изменяющие запросы с чужого Origin отклоняются (403). Методы банка — заголовок `X-Bank-Token`.
     В проде — OIDC (Альфа ID) на API Gateway.
+
+    **Идемпотентность.** `POST /applications` и `POST /applications/{id}/{submit,accept,sign,pay,cancel}` принимают
+    заголовок `Idempotency-Key` (до 128 символов). Повтор с тем же ключом не выполняет действие второй раз и возвращает
+    сохранённый ответ с заголовком `Idempotent-Replayed: true`. Тот же ключ с другим запросом → 422 `idempotency_key_reused`,
+    запрос с этим ключом ещё выполняется → 409 `request_in_progress` + `Retry-After`. Ключи привязаны к клиенту и живут 24 ч.
+
+    **Кэширование.** GET-ответы API отдаются с `ETag`; при `If-None-Match` и неизменных данных — `304 Not Modified` без тела.
+    Справочники (`/products`, `/scoring/scale`) — `Cache-Control: public, max-age=300`.
+
+    **Лимиты.** Не больше 20 запросов в секунду с IP (запас 60) → `429` + `Retry-After`. Таймаут запроса — 10 с (`503 timeout`).
+
+    **Корреляция.** Каждый ответ содержит `X-Request-ID` (входящий принимается, если безопасного вида); он же — в теле ошибки
+    (`error.request_id`), в логах, журнале аудита и заголовках событий Kafka.
+
+    **События (Kafka).** Изменения заявок публикуются в топик `credit.applications.v1` (ключ — id заявки) через transactional
+    outbox: `application.created`, `application.status_changed`, `loan.issued`, `loan.payment_received`; DLQ — `credit.applications.dlq.v1`.
 servers:
   - url: http://localhost:8080
 tags:
@@ -19,7 +35,7 @@ paths:
   /healthz:
     get: { tags: [ops], summary: Liveness, responses: { '200': { description: OK } } }
   /readyz:
-    get: { tags: [ops], summary: Readiness, responses: { '200': { description: OK }, '503': { description: Not ready } } }
+    get: { tags: [ops], summary: 'Readiness: PostgreSQL и Kafka, с причиной отказа', responses: { '200': { description: OK }, '503': { description: Not ready } } }
 
   /api/v1/products:
     get:
@@ -27,6 +43,18 @@ paths:
       summary: Каталог кредитных продуктов
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Product' } } } } }
+  /api/v1/scoring/scale:
+    get:
+      tags: [catalog]
+      summary: Шкала балльной модели (пороги решения)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { base: { type: integer, example: 600 }, reject_below: { type: integer, example: 500 }, approve_from: { type: integer, example: 650 }, max_dti_percent: { type: integer, example: 50 } }
   /api/v1/calc:
     post:
       tags: [catalog]
@@ -50,6 +78,7 @@ paths:
     post:
       tags: [applications]
       summary: Создать черновик анкеты сразу из калькулятора
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateInput' } } } }
       responses:
@@ -57,10 +86,19 @@ paths:
         '422': { $ref: '#/components/responses/Validation' }
     get:
       tags: [applications]
-      summary: Заявки текущего клиента
+      summary: Заявки текущего клиента (без limit — все; с limit/offset — постранично)
       security: [{ client: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Status'
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - $ref: '#/components/parameters/Offset'
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } } }
+        '200':
+          description: OK
+          headers: { X-Total-Count: { $ref: '#/components/headers/TotalCount' }, Link: { $ref: '#/components/headers/Link' }, ETag: { $ref: '#/components/headers/ETag' } }
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } }
+        '304': { description: Не изменилось (If-None-Match) }
+        '422': { $ref: '#/components/responses/Validation' }
   /api/v1/applications/{id}:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
@@ -84,6 +122,7 @@ paths:
     post:
       tags: [applications]
       summary: Отправить в конвейер (draft|need_info → submitted)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
@@ -94,6 +133,7 @@ paths:
     post:
       tags: [applications]
       summary: Принять одобрение/контрпредложение (→ signing)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
@@ -103,6 +143,7 @@ paths:
     post:
       tags: [applications]
       summary: Подписать ПЭП и получить средства (симуляция, → issued)
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { confirm: { type: boolean } }, required: [confirm] } } } }
       responses:
@@ -113,6 +154,7 @@ paths:
     post:
       tags: [applications]
       summary: Отменить заявку
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
@@ -156,6 +198,7 @@ paths:
     post:
       tags: [applications]
       summary: Оплатить очередной платёж по выданному кредиту со своего расчётного счёта
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
@@ -165,11 +208,63 @@ paths:
   /api/v1/bank/applications:
     get:
       tags: [bank]
-      summary: Все заявки конвейера (кабинет сотрудника)
+      summary: Заявки конвейера (кабинет сотрудника) — поиск, фильтр, страницы
+      security: [{ bank: [] }]
+      parameters:
+        - { name: q, in: query, description: 'номер заявки, ИНН или название компании', schema: { type: string, maxLength: 100 } }
+        - $ref: '#/components/parameters/Status'
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: OK
+          headers: { X-Total-Count: { $ref: '#/components/headers/TotalCount' }, Link: { $ref: '#/components/headers/Link' } }
+          content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+  /api/v1/bank/applications/{id}/audit:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [bank]
+      summary: Журнал аудита по заявке (режим PostgreSQL)
       security: [{ bank: [] }]
       responses:
-        '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } } }
-        '401': { $ref: '#/components/responses/Error' }
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    at: { type: string, format: date-time }
+                    actor: { type: string }
+                    action: { type: string, example: loan.pay }
+                    entity: { type: string }
+                    entity_id: { type: string }
+                    outcome: { type: string, enum: [ok, denied, error] }
+                    request_id: { type: string }
+                    details: { type: object }
+        '501': { description: Хранилище без журнала аудита (файловый режим) }
+  /api/v1/bank/platform:
+    get:
+      tags: [bank]
+      summary: Состояние платформы — хранилище, шина событий, очередь outbox, кэши
+      security: [{ bank: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  storage: { type: string, enum: [postgres, file] }
+                  bus: { type: string, enum: [kafka, memory] }
+                  role: { type: string, enum: [all, api, worker] }
+                  outbox_pending: { type: integer }
+                  events_published: { type: integer }
+                  caches: { type: array, items: { type: object, properties: { name: { type: string }, hits: { type: integer }, misses: { type: integer }, size: { type: integer }, hit_rate: { type: number } } } }
 
 components:
   securitySchemes:
@@ -177,7 +272,21 @@ components:
     bank: { type: apiKey, in: header, name: X-Bank-Token }
   parameters:
     Id: { name: id, in: path, required: true, schema: { type: string } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: false, description: 'ключ идемпотентности (UUID); повтор вернёт сохранённый ответ', schema: { type: string, maxLength: 128 } }
+    Status: { name: status, in: query, description: 'статусы через запятую', schema: { type: string, example: 'approved,counter_offer' } }
+    Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+  headers:
+    TotalCount: { description: Общее число записей по фильтру, schema: { type: integer } }
+    Link: { description: 'Соседние страницы (RFC 8288): rel="next", rel="prev"', schema: { type: string } }
+    ETag: { description: Версия ответа для If-None-Match, schema: { type: string } }
   responses:
+    Error:
+      description: Ошибка
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Validation:
+      description: Ошибка валидации (field — путь к полю анкеты)
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
     User:
       type: object
       properties:
@@ -194,21 +303,15 @@ components:
         created_at: { type: string, format: date-time }
         last_login_at: { type: string, format: date-time }
     Error:
-      description: Ошибка
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
-    Validation:
-      description: Ошибка валидации (field — путь к полю анкеты)
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
-  schemas:
-    Error:
       type: object
       properties:
         error:
           type: object
           properties:
-            code: { type: string, enum: [validation, not_found, company_not_found, invalid_transition, unauthorized, bad_request, internal] }
+            code: { type: string, enum: [validation, not_found, company_not_found, invalid_transition, unauthorized, invalid_credentials, too_many_attempts, insufficient_funds, forbidden, bad_request, method_not_allowed, rate_limited, idempotency_key_reused, request_in_progress, timeout, internal] }
             message: { type: string }
             field: { type: string }
+            request_id: { type: string, description: 'совпадает с X-Request-ID — по нему находятся все логи запроса' }
     Status:
       type: string
       enum: [draft, submitted, data_check, scoring, approved, counter_offer, need_info, rejected, signing, issued, closed, cancelled]
@@ -336,6 +439,10 @@ components:
           properties: { score: { type: integer }, active_loans: { type: integer }, has_overdue: { type: boolean }, max_overdue_days: { type: integer }, source: { type: string } }
         checks: { type: array, items: { $ref: '#/components/schemas/Check' } }
         score: { type: integer }
+        factors:
+          type: array
+          description: из чего сложился балл — фактор, баллы (+/−) и объяснение простыми словами
+          items: { type: object, properties: { name: { type: string }, impact: { type: integer }, explain: { type: string } } }
         decision: { $ref: '#/components/schemas/Decision' }
         history: { type: array, items: { $ref: '#/components/schemas/Event' } }
         quote: { $ref: '#/components/schemas/Quote' }

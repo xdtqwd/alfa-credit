@@ -1,26 +1,122 @@
+# Кредитный кабинет: API + обработчик событий + PostgreSQL + Kafka (KRaft, без ZooKeeper).
+#   docker compose up -d --build                 # всё необходимое
+#   docker compose --profile tools up -d         # + Kafka UI на http://localhost:8081
+# Ресурсы: ~1 ГБ RAM на всё (Kafka — 512 МБ), см. README → «Требования к ресурсам».
+
+x-app: &app
+  build:
+    context: ./backend
+  image: alfa-credit/api:0.2.0
+  environment: &app-env
+    DATABASE_URL: postgres://credit:${POSTGRES_PASSWORD:-credit-local}@postgres:5432/credit?sslmode=disable
+    KAFKA_BROKERS: kafka:9092
+    KAFKA_PARTITIONS: "6"
+    PIPELINE_STEP_DELAY: ${PIPELINE_STEP_DELAY:-3s}
+    BANK_TOKEN: ${BANK_TOKEN:-demo-bank}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-20}
+    RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-60}
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+
 services:
+  # HTTP API, раздача фронтенда, outbox relay (БД → Kafka)
   api:
-    build:
-      context: ./backend
-    image: alfa-credit/api:0.1.0
+    <<: *app
     container_name: alfa-credit-api
+    environment:
+      <<: *app-env
+      APP_ROLE: api
     ports:
       - "${HTTP_PORT:-8080}:8080"
+      - "127.0.0.1:${METRICS_PORT:-9090}:9090"   # /metrics — только для локальной машины
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
+  # Обработчики событий из Kafka: конвейер решения и уведомления. Масштабируется отдельно:
+  #   docker compose up -d --scale worker=3   (партиции топика делятся между экземплярами группы)
+  worker:
+    <<: *app
     environment:
-      PIPELINE_STEP_DELAY: ${PIPELINE_STEP_DELAY:-3s}
-      BANK_TOKEN: ${BANK_TOKEN:-demo-bank}
+      <<: *app-env
+      APP_ROLE: worker
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: alfa-credit-postgres
+    environment:
+      POSTGRES_DB: credit
+      POSTGRES_USER: credit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-credit-local}
     volumes:
-      - credit-data:/data
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop: [ALL]
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U credit -d credit"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
     deploy:
       resources:
-        limits:
-          cpus: "0.5"
-          memory: 128M
+        limits: { cpus: "0.5", memory: 256M }
+
+  kafka:
+    image: apache/kafka:3.8.1
+    container_name: alfa-credit-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # топики создаёт сервис с нужным числом партиций
+      KAFKA_LOG_DIRS: /var/lib/kafka/data       # по умолчанию образ пишет в /tmp — без этого том не сохранял бы данные
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx384m"
+      CLUSTER_ID: "q1Sh-9_ISia_zwGINzRvyQ"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512M }
+
+  kafka-ui:
+    profiles: ["tools"]
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: alfa-credit-kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: alfa-credit
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
 
 volumes:
-  credit-data:
+  pg-data:
+  kafka-data:

@@ -242,10 +242,22 @@ function openDD(key) {
   if (!host || !DD[key]) return;
   if (ddOpen !== key) closeDD();
   $('.dd__panel', host).innerHTML = DD[key]();
+  placePanel(host);
   host.classList.add('open');
   $('.dd__btn', host)?.setAttribute('aria-expanded', 'true');
   ddOpen = key;
   if (key === 'bell') markNotificationsSeen();
+}
+// На телефоне панель — шторка во всю ширину под шапкой. Позицию считаем от реальной шапки:
+// в кабинете шапка не «липкая» и без backdrop-filter, поэтому CSS-отступ от неё уводил меню за экран.
+const isPhone = () => matchMedia('(max-width: 640px)').matches;
+function placePanel(host) {
+  const panel = $('.dd__panel', host);
+  if (!panel) return;
+  if (!isPhone()) { panel.style.top = panel.style.maxHeight = ''; return; }
+  const top = Math.max(8, Math.round(($('.ahdr')?.getBoundingClientRect().bottom || 56) + 8));
+  panel.style.top = top + 'px';
+  panel.style.maxHeight = `calc(100dvh - ${top + 12}px)`;
 }
 function closeDD() {
   $$('.dd.open').forEach((d) => { d.classList.remove('open'); $('.dd__btn', d)?.setAttribute('aria-expanded', 'false'); });
@@ -486,7 +498,12 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') { closeDD(); hideFly(); closeMenu(); }
 });
 window.addEventListener('hashchange', () => { closeDD(); hideFly(); paintAuthSlot(); });
-window.addEventListener('resize', debounce(() => { closeDD(); hideFly(); }, 100));
+// на телефоне resize прилетает и при скрытии адресной строки — закрываем меню только при смене ширины
+let lastW = innerWidth;
+window.addEventListener('resize', debounce(() => {
+  if (innerWidth === lastW) { const h = ddOpen && $(`.dd[data-dd="${ddOpen}"]`); if (h) placePanel(h); return; }
+  lastW = innerWidth; closeDD(); hideFly();
+}, 100));
 
 // ---------- меню «Ещё»: скруглённая панель под шапкой сайта ----------
 const mmEl = $('#megamenu');

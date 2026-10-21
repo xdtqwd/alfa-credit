@@ -11,15 +11,21 @@ import (
 	"github.com/xdtqwd/alfa-credit/internal/auth"
 	"github.com/xdtqwd/alfa-credit/internal/domain"
 	"github.com/xdtqwd/alfa-credit/internal/integrations"
+	"github.com/xdtqwd/alfa-credit/internal/obs"
 	"github.com/xdtqwd/alfa-credit/internal/storage"
 )
 
 type AuthService struct {
 	Users    storage.UserRepository
 	Registry integrations.Registry
-	Sessions *auth.Sessions
+	Sessions auth.SessionStore
 	Limiter  *auth.Limiter
 	Now      func() time.Time
+	Audit    *obs.Auditor
+}
+
+func (s *AuthService) audit(ctx context.Context, action, userID, outcome string, details map[string]any) {
+	s.Audit.Record(ctx, obs.AuditEntry{Action: action, Entity: "user", EntityID: userID, Outcome: outcome, Actor: userID, Details: details})
 }
 
 type RegisterInput struct {
@@ -68,27 +74,44 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*domain.U
 		}
 		return nil, "", err
 	}
-	return u, s.Sessions.Create(u.ID), nil
+	s.audit(ctx, "auth.register", u.ID, "ok", map[string]any{"inn": u.Company.INN})
+	tok, err := s.Sessions.Create(ctx, u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, tok, nil
 }
 
 // Login — вход по телефону и паролю с защитой от перебора.
 func (s *AuthService) Login(ctx context.Context, phoneRaw, password, ip string) (*domain.User, string, error) {
 	phone := domain.NormalizePhone(phoneRaw)
 	if s.Limiter.Blocked("p:"+phone) || s.Limiter.Blocked("ip:"+ip) {
+		s.audit(ctx, "auth.login", "", "denied", map[string]any{"reason": "too_many_attempts", "phone": obs.MaskPhone(phone), "ip": ip})
 		return nil, "", domain.ErrTooManyAttempts
 	}
 	u, err := s.Users.FindByPhone(ctx, phone)
 	if err != nil || !auth.VerifyPassword(u.PasswordHash, password) {
 		s.Limiter.Fail("p:" + phone)
 		s.Limiter.Fail("ip:" + ip)
+		s.audit(ctx, "auth.login", "", "denied", map[string]any{"reason": "invalid_credentials", "phone": obs.MaskPhone(phone), "ip": ip})
 		return nil, "", domain.ErrInvalidCredentials
 	}
 	s.Limiter.Reset("p:" + phone)
 	u, _ = s.Users.UpdateUser(ctx, u.ID, func(x *domain.User) error { x.LastLoginAt = s.Now(); return nil })
-	return u, s.Sessions.Create(u.ID), nil
+	s.audit(ctx, "auth.login", u.ID, "ok", map[string]any{"ip": ip})
+	tok, err := s.Sessions.Create(ctx, u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, tok, nil
 }
 
-func (s *AuthService) Logout(token string) { s.Sessions.Delete(token) }
+func (s *AuthService) Logout(ctx context.Context, token string) {
+	if uid, ok := s.Sessions.Get(ctx, token); ok {
+		s.audit(ctx, "auth.logout", uid, "ok", nil)
+	}
+	s.Sessions.Delete(ctx, token)
+}
 
 func (s *AuthService) Me(ctx context.Context, userID string) (*domain.User, error) {
 	return s.Users.GetUser(ctx, userID)

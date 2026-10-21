@@ -1,6 +1,10 @@
-// Package pipeline — фоновый обработчик кредитного конвейера (банковская сторона).
-// Продвигает заявки submitted → data_check → scoring → решение. В целевой архитектуре
-// это отдельный сервис, читающий события из брокера (Kafka) вместо опроса хранилища.
+// Package pipeline — кредитный конвейер (банковская сторона): submitted → data_check → scoring → решение.
+//
+// Основной путь — событийный: конвейер состоит в consumer group топика заявок (Kafka) и на каждое
+// событие «статус изменился» делает следующий шаг. Шаг сам меняет статус → новое событие → следующий шаг.
+// Идемпотентность: inbox (event_id уже обработан — пропускаем) + проверка ожидаемого статуса.
+// Страховка: Run — «подметальщик», который доводит заявки, застрявшие дольше SweepAfter
+// (например, событие ушло в DLQ или конвейер был выключен).
 package pipeline
 
 import (
@@ -10,20 +14,85 @@ import (
 	"time"
 
 	"github.com/xdtqwd/alfa-credit/internal/domain"
+	"github.com/xdtqwd/alfa-credit/internal/events"
 	"github.com/xdtqwd/alfa-credit/internal/integrations"
+	"github.com/xdtqwd/alfa-credit/internal/obs"
 	"github.com/xdtqwd/alfa-credit/internal/scoring"
 	"github.com/xdtqwd/alfa-credit/internal/storage"
 )
+
+// Consumer — имя consumer group конвейера в Kafka.
+const Consumer = "credit-decision-engine"
+
+// Inbox — отметка «событие уже обработано» (pgstore.MarkProcessed).
+type Inbox interface {
+	MarkProcessed(ctx context.Context, consumer, eventID string) (bool, error)
+}
 
 type Worker struct {
 	Repo     storage.Repository
 	Registry integrations.Registry
 	Bureau   integrations.CreditBureau
+	Tx       storage.TxRunner // nil — без транзакций (файловый режим)
+	Inbox    Inbox            // nil — дедупликация только по статусу
 	// StepDelay — имитация времени обработки на этапе, чтобы прогресс был виден в UI.
 	StepDelay time.Duration
-	Interval  time.Duration
-	Log       *slog.Logger
-	Now       func() time.Time
+	// Interval — период «подметальщика»; SweepAfter — сколько заявка может стоять на этапе,
+	// прежде чем подметальщик продвинет её сам (0 — чистый опрос без событий, как в тестах).
+	Interval   time.Duration
+	SweepAfter time.Duration
+	Log        *slog.Logger
+	Now        func() time.Time
+}
+
+var pipelineStatuses = []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring}
+
+// Handle — обработчик события из шины (consumer group Consumer).
+func (w *Worker) Handle(ctx context.Context, e events.Event) error {
+	if e.Type != events.TypeStatusChanged {
+		return nil
+	}
+	p, err := events.DecodeApplication(e)
+	if err != nil {
+		return nil // нечитаемое событие не повторяем
+	}
+	if !domain.Status(p.To).InPipeline() {
+		return nil
+	}
+	ctx = obs.WithRequestID(ctx, e.Headers["request_id"])
+	ctx = obs.WithActor(ctx, "system")
+	// этап «длится» StepDelay с момента смены статуса — прогресс виден клиенту
+	if wait := p.StatusAt.Add(w.StepDelay).Sub(w.Now()); wait > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	a, err := w.Repo.Get(ctx, p.ApplicationID)
+	if err != nil {
+		return err
+	}
+	if string(a.Status) != p.To {
+		return nil // устаревшее событие: заявка уже ушла дальше
+	}
+	run := func(ctx context.Context) error {
+		if w.Inbox != nil {
+			fresh, err := w.Inbox.MarkProcessed(ctx, Consumer, e.ID)
+			if err != nil {
+				return err
+			}
+			if !fresh {
+				obs.Default.Inc("pipeline_duplicates_total", "Повторно доставленные события, пропущенные конвейером")
+				return nil
+			}
+		}
+		return w.process(ctx, a)
+	}
+	if w.Tx != nil {
+		return w.Tx.InTx(ctx, run)
+	}
+	return run(ctx)
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -40,25 +109,32 @@ func (w *Worker) Run(ctx context.Context) {
 }
 
 func (w *Worker) tick(ctx context.Context) {
-	apps, err := w.Repo.List(ctx, storage.Filter{Statuses: []domain.Status{
-		domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring,
-	}})
+	apps, err := w.Repo.List(ctx, storage.Filter{Statuses: pipelineStatuses})
 	if err != nil {
 		w.Log.Error("pipeline list", "err", err)
 		return
 	}
 	now := w.Now()
+	after := max(w.StepDelay, w.SweepAfter)
 	for _, a := range apps {
-		if now.Sub(a.StatusChangedAt) < w.StepDelay {
+		if now.Sub(a.StatusChangedAt) < after {
 			continue
 		}
-		if err := w.process(ctx, a); err != nil {
+		if w.SweepAfter > 0 {
+			obs.Default.Inc("pipeline_swept_total", "Заявки, продвинутые подметальщиком (событие не дошло вовремя)")
+			w.Log.Warn("pipeline sweep: application stuck, advancing", "app", a.Number, "status", a.Status, "since", a.StatusChangedAt)
+		}
+		if err := w.process(obs.WithActor(ctx, "system"), a); err != nil {
 			w.Log.Error("pipeline step failed", "app", a.Number, "status", a.Status, "err", err)
 		}
 	}
 }
 
 func (w *Worker) process(ctx context.Context, a *domain.Application) error {
+	start := time.Now()
+	defer func() {
+		obs.Default.Observe("pipeline_step_seconds", "Время шага конвейера (без паузы этапа)", time.Since(start).Seconds(), "step", string(a.Status))
+	}()
 	switch a.Status {
 	case domain.StatusSubmitted:
 		return w.update(ctx, a, func(x *domain.Application) error {
@@ -82,7 +158,7 @@ func (w *Worker) update(ctx context.Context, a *domain.Application, fn func(*dom
 		return fn(x)
 	})
 	if err == nil {
-		w.Log.Info("application step", "app", a.Number, "from", expected)
+		w.Log.Info("application step", "app", a.Number, "from", expected, "rid", obs.RequestID(ctx))
 	}
 	return err
 }
@@ -161,9 +237,11 @@ func (w *Worker) score(ctx context.Context, a *domain.Application) error {
 		domain.StatusRejected:     "Отказ по заявке",
 		domain.StatusNeedInfo:     "Нужно уточнить данные",
 	}
+	obs.Default.Inc("credit_decisions_total", "Решения конвейера", "decision", string(res.Decision.Type), "product", a.ProductID)
 	return w.update(ctx, a, func(x *domain.Application) error {
 		s := res.Score
 		x.Score = &s
+		x.Factors = res.Factors
 		d := res.Decision
 		x.Decision = &d
 		x.Checks = append(x.Checks, chk("scoring", "Скоринг", resultFor(res.Score), fmt.Sprintf("Балл %d", res.Score)))

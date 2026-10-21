@@ -2,8 +2,9 @@
 FROM golang:1.24-alpine AS build
 WORKDIR /src
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath
-COPY go.mod ./
-RUN go mod download
+# сначала только манифесты зависимостей — слой с модулями кэшируется между сборками
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 COPY . .
 RUN go test ./... \
  && go build -ldflags="-s -w" -o /out/api ./cmd/api \
@@ -18,7 +19,7 @@ ENV HTTP_ADDR=:8080 \
     DATA_FILE=/data/applications.json \
     USERS_FILE=/data/users.json \
     PIPELINE_STEP_DELAY=3s
-EXPOSE 8080
+EXPOSE 8080 9090
 VOLUME ["/data"]
 USER nonroot:nonroot
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 CMD ["/api", "-healthcheck"]

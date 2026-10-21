@@ -1,6 +1,8 @@
-// Package storage — слой хранения заявок.
-// MVP: in-memory + персистентность в JSON-файл на docker volume (атомарная запись через rename).
-// Целевое решение: PostgreSQL (см. docs/ARCHITECTURE.md), интерфейс Repository не меняется.
+// Package storage — порты хранения (Repository, UserRepository, TxRunner) и локальная реализация.
+//
+// Основное хранилище — PostgreSQL (пакет storage/pgstore): ACID-транзакции, блокировки строк,
+// transactional outbox. FileStore — режим без внешних зависимостей для тестов и запуска «одной командой»
+// без Docker: in-memory + JSON-файл с атомарной записью через rename.
 package storage
 
 import (
@@ -12,14 +14,64 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/xdtqwd/alfa-credit/internal/domain"
 )
 
+// Filter — выборка заявок. Сортировка — по дате создания, новые сверху.
 type Filter struct {
 	ClientID string
 	Statuses []domain.Status
+	Query    string // поиск по номеру, ИНН или названию компании (кабинет банка)
+	Limit    int    // 0 — без ограничения
+	Offset   int
+}
+
+// TxRunner выполняет fn в одной транзакции: все изменения заявки и счёта клиента внутри fn
+// фиксируются или откатываются вместе. Репозитории берут транзакцию из ctx.
+type TxRunner interface {
+	InTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// NoTx — TxRunner для файлового режима: транзакций нет, атомарность обеспечивают блокировки
+// и компенсации в сервисе.
+type NoTx struct{}
+
+func (NoTx) InTx(ctx context.Context, fn func(ctx context.Context) error) error { return fn(ctx) }
+
+// Match — общая логика фильтра (для FileStore и тестов).
+func (f Filter) Match(a *domain.Application) bool {
+	if f.ClientID != "" && a.ClientID != f.ClientID {
+		return false
+	}
+	if len(f.Statuses) > 0 && !slices.Contains(f.Statuses, a.Status) {
+		return false
+	}
+	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
+		name := ""
+		if a.Company != nil {
+			name = a.Company.Name
+		}
+		hay := strings.ToLower(a.Number + " " + a.INN + " " + name)
+		if !strings.Contains(hay, q) {
+			return false
+		}
+	}
+	return true
+}
+
+// Paginate применяет Limit/Offset.
+func Paginate[T any](items []T, limit, offset int) []T {
+	if offset >= len(items) {
+		return items[:0]
+	}
+	items = items[offset:]
+	if limit > 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	return items
 }
 
 type Repository interface {
@@ -27,7 +79,9 @@ type Repository interface {
 	Get(ctx context.Context, id string) (*domain.Application, error)
 	// Update выполняет fn атомарно (под блокировкой); при ошибке изменения откатываются.
 	Update(ctx context.Context, id string, fn func(a *domain.Application) error) (*domain.Application, error)
+	// List возвращает страницу заявок по фильтру и общее число подходящих (для X-Total-Count).
 	List(ctx context.Context, f Filter) ([]*domain.Application, error)
+	Count(ctx context.Context, f Filter) (int, error)
 	Ping(ctx context.Context) error
 }
 
@@ -150,18 +204,36 @@ func (s *FileStore) Update(_ context.Context, id string, fn func(a *domain.Appli
 func (s *FileStore) List(_ context.Context, f Filter) ([]*domain.Application, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]*domain.Application, 0, len(s.apps))
+	matched := make([]*domain.Application, 0, len(s.apps))
 	for _, a := range s.apps {
-		if f.ClientID != "" && a.ClientID != f.ClientID {
-			continue
+		if f.Match(a) {
+			matched = append(matched, a)
 		}
-		if len(f.Statuses) > 0 && !slices.Contains(f.Statuses, a.Status) {
-			continue
-		}
-		out = append(out, clone(a))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].Number > matched[j].Number
+		}
+		return matched[i].CreatedAt.After(matched[j].CreatedAt)
+	})
+	page := Paginate(matched, f.Limit, f.Offset)
+	out := make([]*domain.Application, len(page))
+	for i, a := range page {
+		out[i] = clone(a)
+	}
 	return out, nil
+}
+
+func (s *FileStore) Count(_ context.Context, f Filter) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, a := range s.apps {
+		if f.Match(a) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (s *FileStore) Ping(context.Context) error { return nil }
