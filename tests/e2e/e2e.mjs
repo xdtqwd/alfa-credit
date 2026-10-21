@@ -12,14 +12,18 @@ let browser;
 
 const fmtRub = (n) => new Intl.NumberFormat('ru-RU').format(n) + ' ₽';
 const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
-function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
 
 async function test(name, fn) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error' && !/401|Failed to load resource/.test(m.text())) errors.push(m.text()); });
+  page.on('console', (m) => {
+    if (m.type() === 'error' && !/401|Failed to load resource/.test(m.text())) errors.push(m.text());
+  });
   const t0 = Date.now();
   try {
     await fn(page, ctx);
@@ -41,8 +45,15 @@ async function test(name, fn) {
 async function diagnose(page, errors) {
   if (errors.length) console.log('      консоль: ' + errors.join(' | ').slice(0, 400));
   const url = page.url();
-  const shown = await page.evaluate(() => [...document.querySelectorAll('#decision h2, #todo b, .page-head .status, .step.is-current')]
-    .map((e) => e.textContent.trim()).filter(Boolean).slice(0, 6).join(' · ')).catch(() => '');
+  const shown = await page
+    .evaluate(() =>
+      [...document.querySelectorAll('#decision h2, #todo b, .page-head .status, .step.is-current')]
+        .map((e) => e.textContent.trim())
+        .filter(Boolean)
+        .slice(0, 6)
+        .join(' · '),
+    )
+    .catch(() => '');
   console.log(`      страница: ${url}${shown ? ' — ' + shown : ''}`);
   const id = url.match(/#\/cabinet\/applications\/([0-9a-f]+)/)?.[1];
   if (!id) return;
@@ -54,10 +65,17 @@ async function diagnose(page, errors) {
 }
 
 async function apiAs(page, method, path, body) {
-  return page.evaluate(async ([m, p, b]) => {
-    const r = await fetch('/api/v1' + p, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined });
-    return { status: r.status, json: await r.json().catch(() => null) };
-  }, [method, path, body]);
+  return page.evaluate(
+    async ([m, p, b]) => {
+      const r = await fetch('/api/v1' + p, {
+        method: m,
+        headers: { 'Content-Type': 'application/json' },
+        body: b ? JSON.stringify(b) : undefined,
+      });
+      return { status: r.status, json: await r.json().catch(() => null) };
+    },
+    [method, path, body],
+  );
 }
 
 /** Вход через окно в шапке; после входа клиент попадает в «Профиль и реквизиты». */
@@ -77,11 +95,13 @@ async function newApplication(page) {
   await page.waitForSelector('#f-revenue');
 }
 
-const saved = (page, timeout = 5000) => page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout });
+const saved = (page, timeout = 5000) =>
+  page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout });
 
 async function fillAndSubmit(page, { revenue, obligations } = {}) {
   await page.waitForSelector('#f-revenue');
-  if (revenue) await page.fill('#f-revenue', String(revenue)); else await page.click('[data-use-fns]');
+  if (revenue) await page.fill('#f-revenue', String(revenue));
+  else await page.click('[data-use-fns]');
   if (obligations) await page.fill('#f-obligations', String(obligations));
   await page.check('#f-consent');
   await saved(page);
@@ -99,8 +119,8 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   await test('Гость видит продуктовую страницу: разделы сайта и «Войти», вкладок кабинета нет', async (page) => {
     await page.goto(BASE + '/');
     await page.waitForSelector('.hero h1');
-    assert(norm(await page.textContent('.hero h1')).includes('Кредит для бизнеса'), 'нет заголовка');
-    assert(await page.locator('.header--cabinet').count() === 0, 'гостю показана шапка кабинета');
+    assert(norm(await page.textContent('.hero h1')).startsWith('Кредиты для бизнеса'), 'нет заголовка');
+    assert((await page.locator('.header--cabinet').count()) === 0, 'гостю показана шапка кабинета');
     assert(await page.locator('[data-header=login]').isVisible(), 'нет кнопки «Войти»');
   });
 
@@ -127,13 +147,20 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   await test('Срок можно вписать числом: ползунок и платёж следуют, лишнее прижимается к границам', async (page) => {
     await page.goto(BASE + '/');
     const term = '#calc [data-calc=term-text]';
-    const typeTerm = async (v) => { await page.click(term); await page.keyboard.type(String(v)); await page.keyboard.press('Enter'); };
+    const typeTerm = async (v) => {
+      await page.click(term);
+      await page.keyboard.type(String(v));
+      await page.keyboard.press('Enter');
+    };
     await page.waitForFunction(() => /\d/.test(document.querySelector('#calc-pay')?.textContent || ''));
     await typeTerm(36);
-    assert(norm(await page.inputValue(term)) === '36 месяцев', 'срок не применился: ' + await page.inputValue(term));
-    assert(await page.inputValue('#calc [data-calc=term]') === '36', 'ползунок не сдвинулся');
+    assert(norm(await page.inputValue(term)) === '36 месяцев', 'срок не применился: ' + (await page.inputValue(term)));
+    assert((await page.inputValue('#calc [data-calc=term]')) === '36', 'ползунок не сдвинулся');
     const q = await apiAs(page, 'POST', '/calc', { product_id: 'business-dev', amount: 3000000, term_months: 36 });
-    await page.waitForFunction((t) => document.querySelector('#calc-pay')?.textContent.replace(/\s+/g, ' ').trim() === t, norm(fmtRub(q.json.monthly_payment)));
+    await page.waitForFunction(
+      (t) => document.querySelector('#calc-pay')?.textContent.replace(/\s+/g, ' ').trim() === t,
+      norm(fmtRub(q.json.monthly_payment)),
+    );
     await typeTerm(999);
     assert(norm(await page.inputValue(term)) === '60 месяцев', 'срок больше максимума не прижат к 60');
     await typeTerm(1);
@@ -142,13 +169,18 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
 
   await test('Вход ведёт в «Профиль и реквизиты»; вкладки кабинета переключаются', async (page) => {
     await login(page, '79000000001');
-    assert(await page.locator('.header--cabinet .nav__link.is-active').textContent() === 'Профиль', 'активна не вкладка «Профиль»');
+    assert((await page.locator('.header--cabinet .nav__link.is-active').textContent()) === 'Профиль', 'активна не вкладка «Профиль»');
     const req = norm(await page.textContent('#requisites'));
     for (const k of ['ИНН', 'Расчётный счёт', 'БИК', 'Корр. счёт']) assert(req.includes(k), 'в реквизитах нет: ' + k);
     const me = (await apiAs(page, 'GET', '/me')).json;
     assert(req.includes(me.requisites.account), 'не тот расчётный счёт');
     assert(norm(await page.textContent('#balance')) === norm(fmtRub(me.balance)), 'баланс не совпадает с сервером');
-    for (const [href, title] of [['/cabinet/applications', 'Заявки'], ['/cabinet/credits', 'Кредиты'], ['/cabinet/messages', 'Сообщения'], ['/cabinet', 'Профиль']]) {
+    for (const [href, title] of [
+      ['/cabinet/applications', 'Заявки'],
+      ['/cabinet/credits', 'Кредиты'],
+      ['/cabinet/messages', 'Сообщения'],
+      ['/cabinet', 'Профиль'],
+    ]) {
       await page.click(`.header--cabinet .nav__link[href="#${href}"]`);
       await page.waitForFunction((t) => document.querySelector('.page-head h1')?.textContent.startsWith(t), title);
     }
@@ -191,7 +223,8 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await fillAndSubmit(page, { obligations: 200000 });
     await decision(page, 'warn');
     const table = norm(await page.textContent('table.compare'));
-    for (const col of ['Вы просили', 'Банк предлагает', 'Разница', 'Платёж в месяц', 'Переплата', 'Ставка', 'Срок']) assert(table.includes(col), 'в таблице нет: ' + col);
+    for (const col of ['Вы просили', 'Банк предлагает', 'Разница', 'Платёж в месяц', 'Переплата', 'Ставка', 'Срок'])
+      assert(table.includes(col), 'в таблице нет: ' + col);
     const why = norm(await page.textContent('#decision'));
     assert(why.includes('1 500 000 ₽') && why.includes('50%'), 'объяснение не опирается на выручку из анкеты');
   });
@@ -237,11 +270,15 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
 
   await test('Страницы и шапка не вылезают за экран (десктоп, планшет, телефон)', async (page) => {
     const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-    for (const [w, h] of [[1440, 900], [1024, 768], [390, 844]]) {
+    for (const [w, h] of [
+      [1440, 900],
+      [1024, 768],
+      [390, 844],
+    ]) {
       await page.setViewportSize({ width: w, height: h });
       await page.goto(BASE + '/#/');
       await page.waitForSelector('.hero h1');
-      assert(await overflow() <= 1, `горизонтальная прокрутка на главной, ${w}px`);
+      assert((await overflow()) <= 1, `горизонтальная прокрутка на главной, ${w}px`);
     }
     await page.setViewportSize({ width: 1440, height: 900 });
     await login(page, '79000000001');
@@ -250,7 +287,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
       for (const r of ['/cabinet', '/cabinet/applications', '/cabinet/credits']) {
         await page.goto(BASE + '/#' + r);
         await page.waitForSelector('.page-head h1');
-        assert(await overflow() <= 1, `горизонтальная прокрутка на ${r}, ${w}px`);
+        assert((await overflow()) <= 1, `горизонтальная прокрутка на ${r}, ${w}px`);
       }
       const overlap = await page.evaluate(() => {
         const links = [...document.querySelectorAll('.nav__link')].filter((l) => l.offsetParent);
@@ -266,7 +303,10 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   await test('Уход со страницы до ответа калькулятора не ломает скрипт (регрессия)', async (page) => {
     await login(page, '79000000001');
     // задерживаем расчёт, чтобы ответ гарантированно пришёл уже после перехода в анкету
-    await page.route('**/api/v1/calc', async (route) => { await new Promise((r) => setTimeout(r, 800)); await route.continue(); });
+    await page.route('**/api/v1/calc', async (route) => {
+      await new Promise((r) => setTimeout(r, 800));
+      await route.continue();
+    });
     await page.goto(BASE + '/#/');
     await page.click('#products [data-start="business-dev"]');
     await page.waitForSelector('#f-revenue');
@@ -281,8 +321,8 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
       await page.click('#auth-password');
       await page.keyboard.type(PASS); // сразу после открытия окна
       await page.waitForTimeout(120);
-      assert(await page.inputValue('#auth-password') === PASS, 'пароль потерялся при наборе');
-      assert(await page.inputValue('#auth-phone') === '', 'символы пароля улетели в поле телефона');
+      assert((await page.inputValue('#auth-password')) === PASS, 'пароль потерялся при наборе');
+      assert((await page.inputValue('#auth-phone')) === '', 'символы пароля улетели в поле телефона');
       await page.keyboard.press('Escape');
     }
   });
@@ -295,9 +335,9 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await login(page, '79000000001');
     await page.click('.logo');
     await page.waitForSelector('.hero h1');
-    assert(await page.locator('.header--cabinet').count() === 0, 'на главной не должно быть шапки кабинета');
+    assert((await page.locator('.header--cabinet').count()) === 0, 'на главной не должно быть шапки кабинета');
     assert(norm(await page.textContent('.nav')).includes('Как получить'), 'на главной нет разделов сайта');
-    assert(await page.locator('[data-header=login]').count() === 0, 'после входа вместо «Войти» должен быть аватар');
+    assert((await page.locator('[data-header=login]').count()) === 0, 'после входа вместо «Войти» должен быть аватар');
     await page.click('[data-header=menu]');
     await page.click('.menu__head');
     await page.waitForSelector('.header--cabinet #requisites, #requisites');
@@ -310,14 +350,14 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await page.waitForSelector('.page-head h1');
     await page.hover('[data-header=menu]');
     await page.waitForTimeout(300);
-    assert(await menuOpen(page) === 0, 'меню не должно открываться наведением');
+    assert((await menuOpen(page)) === 0, 'меню не должно открываться наведением');
     await page.click('[data-header=menu]');
     await page.waitForSelector('.menu .menu__head');
     await page.mouse.move(10, 600);
     await page.waitForTimeout(7000); // дольше двух циклов фонового опроса
-    assert(await menuOpen(page) === 1, 'меню закрылось само (фоновый опрос перерисовал шапку)');
+    assert((await menuOpen(page)) === 1, 'меню закрылось само (фоновый опрос перерисовал шапку)');
     await page.click('.menu .menu__sep');
-    assert(await menuOpen(page) === 1, 'клик внутри меню не должен его закрывать');
+    assert((await menuOpen(page)) === 1, 'клик внутри меню не должен его закрывать');
     assert(!norm(await page.textContent('.menu')).includes('Личный кабинет'), 'пункт «Личный кабинет» должен быть убран');
     await page.mouse.click(10, 600);
     await page.waitForFunction(() => !document.querySelector('.menu-wrap .menu'));
@@ -337,26 +377,34 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert(await page.locator('.logo').isVisible(), 'шапка должна оставаться видимой');
     assert(nav.y >= hdr.y + hdr.height - 1, 'панель должна начинаться под шапкой');
     assert(nav.height < 844, 'панель не должна закрывать весь экран');
-    assert(parseFloat(await page.$eval('.header .nav', (e) => getComputedStyle(e).borderBottomLeftRadius)) >= 16, 'панель должна быть скруглённой');
+    assert(
+      parseFloat(await page.$eval('.header .nav', (e) => getComputedStyle(e).borderBottomLeftRadius)) >= 16,
+      'панель должна быть скруглённой',
+    );
     await page.mouse.click(195, 800);
     await page.waitForFunction(() => !document.querySelector('.header.is-open'));
     await page.click('[data-header=burger]');
     await page.click('.header .nav__link[data-section=faq]');
-    await page.waitForFunction(() => !document.querySelector('.header.is-open') && document.getElementById('faq').getBoundingClientRect().top < 300);
+    await page.waitForFunction(
+      () => !document.querySelector('.header.is-open') && document.getElementById('faq').getBoundingClientRect().top < 300,
+    );
   });
 
   await test('«Услуги для бизнеса»: список ссылок на alfabank.ru открывается наведением, в новой вкладке', async (page) => {
     await page.goto(BASE + '/#/');
     await page.waitForSelector('.hero h1');
-    assert(await page.locator('.topbar').count() === 0, 'полоски сегментов над шапкой быть не должно');
+    assert((await page.locator('.topbar').count()) === 0, 'полоски сегментов над шапкой быть не должно');
     const panel = page.locator('#services');
     assert(!(await panel.isVisible()), 'панель не должна быть видна без наведения');
     await page.hover('.nav__more');
     await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'visible');
-    assert(await page.locator('#services .art, #services img').count() === 0, 'в меню услуг не должно быть картинок — только список');
+    assert((await page.locator('#services .art, #services img').count()) === 0, 'в меню услуг не должно быть картинок — только список');
     const links = await page.$$eval('#services a', (as) => as.map((a) => ({ href: a.href, target: a.target, rel: a.rel })));
     assert(links.length >= 6, 'мало услуг в списке');
-    assert(links.every((l) => l.href.startsWith('https://alfabank.ru/') && l.target === '_blank' && l.rel.includes('noopener')), 'ссылки должны вести на alfabank.ru в новой вкладке: ' + JSON.stringify(links[0]));
+    assert(
+      links.every((l) => l.href.startsWith('https://alfabank.ru/') && l.target === '_blank' && l.rel.includes('noopener')),
+      'ссылки должны вести на alfabank.ru в новой вкладке: ' + JSON.stringify(links[0]),
+    );
     await page.waitForTimeout(250); // дождались конца анимации появления
     const hdr = await page.locator('.header').boundingBox();
     const box = await panel.boundingBox();
@@ -366,6 +414,13 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert(await panel.isVisible(), 'панель закрылась при переходе курсора на неё');
     await page.mouse.move(720, 880); // увели курсор
     await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'hidden');
+    const [panelBg, headerBg] = await page.evaluate(() =>
+      ['#services', '.header'].map((q) => getComputedStyle(document.querySelector(q)).backgroundColor),
+    );
+    assert(panelBg === 'rgb(233, 235, 238)', 'панель услуг должна быть платиновой: ' + panelBg);
+    assert(headerBg === 'rgba(0, 0, 0, 0)', 'платиновая шапка прозрачна и лежит на первом экране без шва: ' + headerBg);
+    await page.evaluate(() => window.scrollTo(0, 800));
+    await page.waitForFunction(() => document.querySelector('.header').getBoundingClientRect().bottom <= 0);
   });
 
   await test('Овердрафт: срок фиксированный — без ползунка, платёж считается', async (page) => {
@@ -373,8 +428,11 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     const a = (await apiAs(page, 'POST', '/applications', { product_id: 'overdraft' })).json;
     await page.goto(BASE + '/#/cabinet/applications/' + a.id);
     await page.waitForSelector('#form-calc [data-calc-fixed]');
-    assert(await page.locator('#form-calc input[type=range][data-calc=term]').count() === 0, 'у овердрафта не должно быть ползунка срока');
-    assert(await page.locator('#form-calc input[type=range][data-calc=amount]').count() === 1, 'ползунок суммы должен остаться');
+    assert(
+      (await page.locator('#form-calc input[type=range][data-calc=term]').count()) === 0,
+      'у овердрафта не должно быть ползунка срока',
+    );
+    assert((await page.locator('#form-calc input[type=range][data-calc=amount]').count()) === 1, 'ползунок суммы должен остаться');
     assert(norm(await page.inputValue('#form-calc [data-calc=term-text]')) === '12 месяцев', 'срок овердрафта — 12 месяцев');
     await page.waitForFunction(() => /\d/.test(document.querySelector('#sum-pay')?.textContent || ''));
     await page.click('[data-product="business-dev"]');
@@ -391,12 +449,15 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
         await m.tap('[data-header=menu]');
         await m.waitForSelector('.menu .menu__head');
         const r = await m.locator('.menu').boundingBox();
-        assert(r && r.y >= 0 && r.y + 60 < vp.height && r.x >= 0 && r.x + r.width <= vp.width, `${where}: меню за пределами экрана ${JSON.stringify(r)}`);
+        assert(
+          r && r.y >= 0 && r.y + 60 < vp.height && r.x >= 0 && r.x + r.width <= vp.width,
+          `${where}: меню за пределами экрана ${JSON.stringify(r)}`,
+        );
       };
       await check('кабинет');
       await m.mouse.wheel(0, 300);
       await m.waitForTimeout(400);
-      assert(await menuOpen(m) === 1, 'меню закрылось при прокрутке');
+      assert((await menuOpen(m)) === 1, 'меню закрылось при прокрутке');
       await m.touchscreen.tap(vp.width / 2, vp.height - 40); // касание мимо меню
       await m.waitForFunction(() => !document.querySelector('.menu-wrap .menu'));
       await m.goto(BASE + '/#/');
@@ -404,7 +465,9 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
       await check('главная');
       await m.tap('.menu__head');
       await m.waitForSelector('#requisites');
-    } finally { await mctx.close(); }
+    } finally {
+      await mctx.close();
+    }
   });
 
   await test('Разбор балла: одобрение — шкала с отметкой и плюсы в факторах', async (page) => {
@@ -413,7 +476,10 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await fillAndSubmit(page);
     await decision(page, 'ok');
     const score = norm(await page.textContent('.acc.score'));
-    assert(score.includes('зона одобрения') && score.includes('Стартовый балл') && /\+\d+/.test(score), 'нет разбора балла: ' + score.slice(0, 120));
+    assert(
+      score.includes('зона одобрения') && score.includes('Стартовый балл') && /\+\d+/.test(score),
+      'нет разбора балла: ' + score.slice(0, 120),
+    );
     assert(await page.locator('.acc.score .scale__mark').isVisible(), 'на шкале нет отметки балла');
   });
 
@@ -422,13 +488,13 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await newApplication(page);
     await fillAndSubmit(page);
     await decision(page, 'bad');
-    assert(await page.locator('.acc.score .factor--minus').count() >= 1, 'в разборе нет минусов');
+    assert((await page.locator('.acc.score .factor--minus').count()) >= 1, 'в разборе нет минусов');
     assert(norm(await page.textContent('.acc.score')).includes('зона отказа'), 'нет зоны отказа');
     const head = page.locator('.acc.score > .acc__head');
-    assert(await head.getAttribute('aria-expanded') === 'true', 'разбор должен быть раскрыт');
+    assert((await head.getAttribute('aria-expanded')) === 'true', 'разбор должен быть раскрыт');
     await head.click();
     await page.waitForFunction(() => getComputedStyle(document.querySelector('.acc.score > .acc__body')).visibility === 'hidden');
-    assert(await head.getAttribute('aria-expanded') === 'false', 'aria-expanded не обновился');
+    assert((await head.getAttribute('aria-expanded')) === 'false', 'aria-expanded не обновился');
   });
 
   await test('Узкие экраны: этапы заявки и список заявок не наезжают друг на друга', async (page) => {
@@ -448,23 +514,66 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     }
     await page.goto(BASE + '/#/cabinet/applications');
     await page.waitForSelector('.list-item');
-    const out = await page.evaluate(() => [...document.querySelectorAll('.list-item')].filter((e) => e.scrollWidth > e.clientWidth + 1).length);
+    const out = await page.evaluate(
+      () => [...document.querySelectorAll('.list-item')].filter((e) => e.scrollWidth > e.clientWidth + 1).length,
+    );
     assert(out === 0, 'содержимое строк списка заявок вылезает за край');
   });
 
   await test('Платформа: действия с деньгами идут с Idempotency-Key, кабинет банка показывает инфраструктуру', async (page) => {
     await login(page, '79000000001');
     const keys = [];
-    page.on('request', (r) => { if (r.method() === 'POST' && /\/applications(\/[^/]+\/(submit|accept|sign|pay))?$/.test(r.url())) keys.push(r.headers()['idempotency-key']); });
+    page.on('request', (r) => {
+      if (r.method() === 'POST' && /\/applications(\/[^/]+\/(submit|accept|sign|pay))?$/.test(r.url()))
+        keys.push(r.headers()['idempotency-key']);
+    });
     await newApplication(page);
     await fillAndSubmit(page);
-    assert(keys.length >= 2 && keys.every((k) => k && k.length >= 16), 'POST-действия должны идти с Idempotency-Key: ' + JSON.stringify(keys));
+    assert(
+      keys.length >= 2 && keys.every((k) => k && k.length >= 16),
+      'POST-действия должны идти с Idempotency-Key: ' + JSON.stringify(keys),
+    );
     assert(new Set(keys).size === keys.length, 'у каждого действия свой ключ');
     await page.goto(BASE + '/#/bank');
     await page.waitForSelector('#bank-platform .platform');
     const plat = norm(await page.textContent('#bank-platform'));
     assert(plat.includes('Хранилище') && plat.includes('Шина событий'), 'нет состояния платформы: ' + plat);
     await page.waitForSelector('#bank-table table');
+  });
+
+  await test('Клавиатура: меню услуг по фокусу и Esc, вопросы по Enter, ползунок стрелками, окно держит и возвращает фокус', async (page) => {
+    await page.goto(BASE + '/#/');
+    await page.waitForSelector('.hero h1');
+    const visibility = () => page.$eval('#services', (e) => getComputedStyle(e).visibility);
+    await page.focus('.nav__more');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'visible');
+    await page.keyboard.press('Tab');
+    assert(await page.evaluate(() => !!document.activeElement.closest('#services')), 'Tab с «Услуг» должен вести в меню услуг');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'hidden');
+    assert((await visibility()) === 'hidden', 'Esc должен закрывать меню услуг');
+
+    await page.focus('.acc.faq .acc__head');
+    await page.keyboard.press('Enter');
+    assert(await page.$eval('.acc.faq', (e) => e.classList.contains('is-open')), 'вопрос должен раскрываться по Enter');
+
+    await page.focus('#calc [data-calc=term]');
+    await page.keyboard.press('ArrowRight');
+    assert(norm(await page.inputValue('#calc [data-calc=term-text]')) === '25 месяцев', 'срок должен меняться стрелками');
+
+    await page.focus('[data-header=login]');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#auth-phone');
+    assert(
+      (await page.getAttribute('.modal', 'aria-label')) === 'Вход в кредитный кабинет',
+      'у окна входа должно быть имя для экранных дикторов',
+    );
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('Tab');
+      assert(await page.evaluate(() => !!document.activeElement.closest('.modal')), 'фокус ушёл из окна входа');
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.dataset.header === 'login');
   });
 
   await test('Чужую заявку открыть нельзя', async (page, ctx) => {
@@ -490,4 +599,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} прошли`);
   process.exit(failed.length ? 1 : 0);
-})().catch((e) => { console.error(e); process.exit(2); });
+})().catch((e) => {
+  console.error(e);
+  process.exit(2);
+});

@@ -36,12 +36,22 @@ export default async function applications(root, { signal }) {
     root.innerHTML = `<div class="container">
       ${pageHead('Заявки', 'Все заявки вашей компании и что по каждой нужно сделать')}
       <section class="card">
-        <nav class="tabs" aria-label="Фильтр заявок">${FILTERS.map(([k, label, f]) => `
-          <button class="tab ${k === filter ? 'is-on' : ''}" data-filter="${k}">${label}<span class="tab__count">${apps.filter(f).length}</span></button>`).join('')}
+        <nav class="tabs" aria-label="Фильтр заявок">${FILTERS.map(
+          ([k, label, f]) => `
+          <button class="tab ${k === filter ? 'is-on' : ''}" data-filter="${k}">${label}<span class="tab__count">${apps.filter(f).length}</span></button>`,
+        ).join('')}
         </nav>
-        ${list.length ? `<div class="list">${list.map(item).join('')}</div>`
-          : empty(filter === 'all' ? 'Заявок пока нет' : 'Здесь пусто', filter === 'all' ? 'Рассчитайте кредит и сразу заполните анкету — это займёт пару минут.' : 'В этом разделе сейчас нет заявок.',
-            filter === 'all' ? '<button class="btn btn--primary" data-new-loan>Оформить кредит</button>' : '')}
+        ${
+          list.length
+            ? `<div class="list">${list.map(item).join('')}</div>`
+            : empty(
+                filter === 'all' ? 'Заявок пока нет' : 'Здесь пусто',
+                filter === 'all'
+                  ? 'Рассчитайте кредит и сразу заполните анкету — это займёт пару минут.'
+                  : 'В этом разделе сейчас нет заявок.',
+                filter === 'all' ? '<button class="btn btn--primary" data-new-loan>Оформить кредит</button>' : '',
+              )
+        }
       </section>
     </div>`;
   };
@@ -49,6 +59,16 @@ export default async function applications(root, { signal }) {
 
   const unsubscribe = subscribe(draw);
   signal.addEventListener('abort', unsubscribe, { once: true });
-  on(root, 'click', '[data-filter]', (_, el) => { filter = el.dataset.filter; storage.set('apps_filter', filter); draw(); }, signal);
+  on(
+    root,
+    'click',
+    '[data-filter]',
+    (_, el) => {
+      filter = el.dataset.filter;
+      storage.set('apps_filter', filter);
+      draw();
+    },
+    signal,
+  );
   on(root, 'click', '[data-new-loan]', () => startApplication('business-dev'), signal);
 }

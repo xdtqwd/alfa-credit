@@ -18,40 +18,54 @@
   font-display: swap;
   font-weight: 100 900;
   src: url(../fonts/inter-latin-wght-normal.woff2) format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
-@font-face { /* только ради ₽ (U+20BD) и редких латинских знаков */
+@font-face {
+  /* только ради ₽ (U+20BD) и редких латинских знаков */
   font-family: 'Inter';
   font-style: normal;
   font-display: swap;
   font-weight: 100 900;
   src: url(../fonts/inter-latin-ext-wght-normal.woff2) format('woff2-variations');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
 :root {
   /* бренд */
-  --brand: #EF3124;
-  --brand-hover: #D8291D;
-  --brand-tint: #FDEEEC;
+  --brand: #ef3124;
+  --brand-tint: #fdeeec;
+  /* красный для текста и заливки кнопок с белым текстом — чуть глубже фирменного, чтобы контраст был не ниже 4.5:1 (WCAG AA) */
+  --brand-text: #c4271c;
+  --brand-button: #e0281c;
+  --brand-button-hover: #c9241a;
 
   /* текст и линии: смягчённый чёрный и серые брендбука */
-  --ink: #1F2426;
+  --ink: #1f2426;
   --ink-2: #505759;
-  --ink-3: #868C8E;
-  --line: #D9D9D6;
-  --line-soft: #EAEAE7;
+  --ink-3: #62686a; /* подписи: контраст ≥ 4.5:1 и на белом, и на светло-сером */
+  --line: #d9d9d6;
+  --line-soft: #eaeae7;
 
   /* поверхности */
-  --bg: #FFFFFF;
-  --surface: #F5F5F3;
-  --surface-2: #EDEDEA;
+  /* платина — премиальная тема главной для предпринимателей: светлый металл с мягким бликом */
+  --platinum: #e9ebee;
+  --platinum-sheen: linear-gradient(160deg, #e9ebee 0%, #fbfcfd 20%, #d2d6dc 46%, #f3f5f7 64%, #c2c7ce 100%);
+  --platinum-line: rgba(31, 36, 38, 0.12);
+  --bg: #ffffff;
+  --surface: #f5f5f3;
+  --surface-2: #ededea;
 
   /* статусы — приглушённые, чтобы не спорить с красным бренда */
-  --ok: #1D7A49;   --ok-tint: #E7F3EC;
-  --warn: #9A5B07; --warn-tint: #FBF1E1;
-  --info: #3A5888; --info-tint: #ECF0F6;
-  --bad: #B8261C;  --bad-tint: #FCECEA;
+  --ok: #1d7a49;
+  --ok-tint: #e7f3ec;
+  --warn: #9a5b07;
+  --warn-tint: #fbf1e1;
+  --info: #3a5888;
+  --info-tint: #ecf0f6;
+  --bad: #b8261c;
+  --bad-tint: #fcecea;
 
   /* типографика */
   --font: 'Inter', Arial, 'Helvetica Neue', system-ui, sans-serif;
@@ -68,9 +82,8 @@
   --radius: 12px;
   --radius-l: 20px;
   --radius-xl: 32px; /* крупные блоки главной — как на alfabank.ru */
-  --shadow: 0 1px 2px rgba(31, 36, 38, .05), 0 4px 14px rgba(31, 36, 38, .05);
-  --shadow-pop: 0 12px 36px rgba(31, 36, 38, .16);
-  --focus: 0 0 0 3px rgba(80, 87, 89, .28);
+  --shadow-pop: 0 12px 36px rgba(31, 36, 38, 0.16);
+  --focus: 0 0 0 3px rgba(80, 87, 89, 0.28);
 
   /* сетка */
   --container: 1200px;

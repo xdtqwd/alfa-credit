@@ -11,7 +11,13 @@ import { icon } from '../ui/icons.js';
 import { calcFields, bindCalc, createQuoter } from '../features/calculator.js';
 import { backLink, pageHead } from './parts.js';
 
-const POSITIONS = ['Генеральный директор', 'Собственник бизнеса', 'Финансовый директор', 'Главный бухгалтер', 'Индивидуальный предприниматель'];
+const POSITIONS = [
+  'Генеральный директор',
+  'Собственник бизнеса',
+  'Финансовый директор',
+  'Главный бухгалтер',
+  'Индивидуальный предприниматель',
+];
 
 const checklist = (a) => [
   ['Сумма и срок', true],
@@ -28,28 +34,36 @@ function layout(a, p) {
   return `<div class="container">
     ${backLink('/cabinet/applications', 'Все заявки')}
     ${pageHead(`Анкета · ${p.name}`, `Заявка ${esc(a.number)} · всё сохраняется автоматически, можно вернуться позже`)}
-    ${reasons.length ? `<div class="notice notice--action notice--block"><span class="notice__ic">${icon('alert', 20)}</span>
-      <div class="notice__txt"><small>Нужно уточнение</small><b>Исправьте данные и отправьте снова</b>${reasons.map((r) => `<span>${esc(r)}</span>`).join('')}</div></div>` : ''}
+    ${
+      reasons.length
+        ? `<div class="notice notice--action notice--block"><span class="notice__ic">${icon('alert', 20)}</span>
+      <div class="notice__txt"><small>Нужно уточнение</small><b>Исправьте данные и отправьте снова</b>${reasons.map((r) => `<span>${esc(r)}</span>`).join('')}</div></div>`
+        : ''
+    }
     <div class="form-layout">
       <div class="stack-l">
         <section class="card fsec" data-sec="0">
-          <div class="fsec__head"><span class="fsec__n">1</span><div><h3>Сумма и срок</h3></div></div>
+          <div class="fsec__head"><span class="fsec__n">1</span><div><h2>Сумма и срок</h2></div></div>
           <div class="stack">
-            <div class="chips" role="radiogroup" aria-label="Кредит">${session.products.map((x) => `
-              <button class="chip ${x.id === p.id ? 'is-on' : ''}" data-product="${x.id}" role="radio" aria-checked="${x.id === p.id}">${esc(x.name)}</button>`).join('')}</div>
+            <div class="chips" role="radiogroup" aria-label="Кредит">${session.products
+              .map(
+                (x) => `
+              <button class="chip ${x.id === p.id ? 'is-on' : ''}" data-product="${x.id}" role="radio" aria-checked="${x.id === p.id}">${esc(x.name)}</button>`,
+              )
+              .join('')}</div>
             <div class="stack" id="form-calc"></div>
             <div class="field"><span class="field__label">Цель кредита</span><div class="chips" id="form-purposes"></div></div>
           </div>
         </section>
 
         <section class="card fsec" data-sec="1">
-          <div class="fsec__head"><span class="fsec__n">2</span><div><h3>Компания</h3><p>Из профиля, сверено с ЕГРЮЛ/ЕГРИП — вводить ничего не нужно</p></div></div>
+          <div class="fsec__head"><span class="fsec__n">2</span><div><h2>Компания</h2><p>Из профиля, сверено с ЕГРЮЛ/ЕГРИП — вводить ничего не нужно</p></div></div>
           <div class="company-box" id="form-company"></div>
           <p class="note">${icon('card', 20)}<span>Деньги поступят на расчётный счёт ${esc(me.requisites.account)}, ${esc(me.requisites.bank_name)}. <a class="btn--link" href="#/cabinet">Реквизиты</a></span></p>
         </section>
 
         <section class="card fsec" data-sec="2">
-          <div class="fsec__head"><span class="fsec__n">3</span><div><h3>Финансы</h3><p>Три цифры — без выписок и справок</p></div></div>
+          <div class="fsec__head"><span class="fsec__n">3</span><div><h2>Финансы</h2><p>Три цифры — без выписок и справок</p></div></div>
           <div class="fields">
             <div class="field" data-field="financials.annual_revenue"><label for="f-revenue">Выручка за последний год, ₽</label>
               <input class="input" id="f-revenue" inputmode="numeric" data-money="annual_revenue" value="${a.financials.annual_revenue ? fmt(a.financials.annual_revenue) : ''}" placeholder="например, 24 000 000">
@@ -62,7 +76,7 @@ function layout(a, p) {
         </section>
 
         <section class="card fsec" data-sec="3">
-          <div class="fsec__head"><span class="fsec__n">4</span><div><h3>Контактное лицо и согласие</h3></div></div>
+          <div class="fsec__head"><span class="fsec__n">4</span><div><h2>Контактное лицо и согласие</h2></div></div>
           <div class="fields">
             <div class="field field--wide" data-field="contact.full_name"><label for="f-name">ФИО</label>
               <input class="input" id="f-name" data-contact="full_name" value="${esc(a.contact.full_name)}" autocomplete="name"></div>
@@ -116,9 +130,12 @@ export default function applicationForm(root, a, { signal }) {
     const el = $('#save-state', root);
     const state = saving || (pending() && !saveError) ? 'saving' : saveError ? 'error' : 'ok';
     el.classList.toggle('is-error', state === 'error');
-    el.innerHTML = state === 'saving' ? 'Сохраняем…'
-      : state === 'error' ? `Не сохранено: ${esc(saveError)} · <button type="button" data-retry>Повторить</button>`
-        : 'Сохранено';
+    el.innerHTML =
+      state === 'saving'
+        ? 'Сохраняем…'
+        : state === 'error'
+          ? `Не сохранено: ${esc(saveError)} · <button type="button" data-retry>Повторить</button>`
+          : 'Сохранено';
   };
 
   async function flush() {
@@ -132,7 +149,8 @@ export default function applicationForm(root, a, { signal }) {
       const fresh = await api('PATCH', `/applications/${id}`, patch);
       saveError = null;
       // расчёт с сервера принимаем, только если параметры не успели измениться
-      if (fresh.quote && fresh.amount === a.amount && fresh.term_months === a.term_months && fresh.product_id === a.product_id) a.quote = fresh.quote;
+      if (fresh.quote && fresh.amount === a.amount && fresh.term_months === a.term_months && fresh.product_id === a.product_id)
+        a.quote = fresh.quote;
     } catch (e) {
       // несохранённые поля возвращаются в очередь, не затирая более свежие правки
       for (const [k, v] of Object.entries(patch)) if (!(k in queue)) queue[k] = v;
@@ -149,7 +167,11 @@ export default function applicationForm(root, a, { signal }) {
   }
   const flushSoon = debounce(flush, 500);
   signal.addEventListener('abort', () => flushSoon.cancel(), { once: true });
-  const save = (patch) => { Object.assign(queue, patch); paintSaveState(); flushSoon(); };
+  const save = (patch) => {
+    Object.assign(queue, patch);
+    paintSaveState();
+    flushSoon();
+  };
 
   // ---------- сводка ----------
   const paintSummary = () => {
@@ -175,9 +197,21 @@ export default function applicationForm(root, a, { signal }) {
   };
 
   // ---------- блоки ----------
-  const quoter = createQuoter((q) => { a.quote = q; paintSummary(); }, () => { a.quote = null; paintSummary(); }, signal);
+  const quoter = createQuoter(
+    (q) => {
+      a.quote = q;
+      paintSummary();
+    },
+    () => {
+      a.quote = null;
+      paintSummary();
+    },
+    signal,
+  );
   const paintPurposes = () => {
-    $('#form-purposes', root).innerHTML = p.purposes.map((x) => `<button class="chip ${x === a.purpose ? 'is-on' : ''}" data-purpose="${esc(x)}">${esc(x)}</button>`).join('');
+    $('#form-purposes', root).innerHTML = p.purposes
+      .map((x) => `<button class="chip ${x === a.purpose ? 'is-on' : ''}" data-purpose="${esc(x)}">${esc(x)}</button>`)
+      .join('');
   };
   const paintCalc = () => {
     const box = $('#form-calc', root);
@@ -198,7 +232,8 @@ export default function applicationForm(root, a, { signal }) {
       ? `<b>${esc(c.name)}</b><span>ИНН ${esc(c.inn)} · ОГРН ${esc(c.ogrn)} · ${c.status === 'active' ? 'действует' : 'ликвидирована'}</span><span>${esc(c.address)}</span>`
       : '<span>Компания не найдена в реестре</span>';
     $('#f-revenue-hint', root).innerHTML = c?.revenue_last_year
-      ? `По данным ФНС за прошлый год: ${rub(c.revenue_last_year)} · <button type="button" class="btn--link" data-use-fns>подставить</button>` : '';
+      ? `По данным ФНС за прошлый год: ${rub(c.revenue_last_year)} · <button type="button" class="btn--link" data-use-fns>подставить</button>`
+      : '';
   };
   paintCalc();
   paintCompany();
@@ -206,64 +241,136 @@ export default function applicationForm(root, a, { signal }) {
   refresh();
 
   // ---------- события ----------
-  on(root, 'click', '[data-product]', (_, el) => {
-    p = product(el.dataset.product);
-    a.product_id = p.id;
-    a.amount = Math.min(p.max_amount, Math.max(p.min_amount, a.amount));
-    a.term_months = Math.min(p.max_term, Math.max(p.min_term, a.term_months));
-    a.purpose = p.purposes[0];
-    $$('[data-product]', root).forEach((c) => { const isOn = c === el; c.classList.toggle('is-on', isOn); c.setAttribute('aria-checked', isOn); });
-    $('h1', root).textContent = `Анкета · ${p.name}`;
-    save({ product_id: p.id, amount: a.amount, term_months: a.term_months, purpose: a.purpose });
-    paintCalc();
-    quoter(p.id, a.amount, a.term_months);
-    refresh();
-  }, signal);
-  on(root, 'click', '[data-purpose]', (_, el) => { a.purpose = el.dataset.purpose; save({ purpose: a.purpose }); paintPurposes(); }, signal);
-  on(root, 'click', '[data-use-fns]', () => {
-    a.financials.annual_revenue = a.company.revenue_last_year;
-    $('#f-revenue', root).value = fmt(a.financials.annual_revenue);
-    save({ financials: { ...a.financials } });
-    refresh();
-  }, signal);
-  on(root, 'click', '[data-retry]', () => { saveError = null; paintSaveState(); flush(); }, signal);
-  on(root, 'input', '[data-money]', (_, el) => {
-    const v = +digits(el.value);
-    el.value = v ? fmt(v) : '';
-    a.financials[el.dataset.money] = v;
-    save({ financials: { ...a.financials } });
-    refresh();
-  }, signal);
-  on(root, 'input', '[data-contact]', (_, el) => {
-    if (el.dataset.contact === 'phone') el.value = phone(el.value);
-    a.contact[el.dataset.contact] = el.value;
-    save({ contact: { ...a.contact } });
-    refresh();
-  }, signal);
-  on(root, 'change', '#f-consent', (_, el) => { a.consent = el.checked; save({ consent: a.consent }); refresh(); }, signal);
-
-  on(root, 'click', '#submit', async (_, btn) => {
-    btn.disabled = true;
-    btn.textContent = 'Отправляем…';
-    try {
-      // сначала досохраняем анкету — нельзя отправлять, если правки не дошли до сервера
-      while (saving) await new Promise((r) => setTimeout(r, 100));
-      flushSoon.cancel();
-      await flush();
-      if (saveError) throw new Error(`Анкета не сохранена (${saveError}). Проверьте связь и нажмите «Повторить».`);
-      await api('PATCH', `/applications/${id}`, {
-        product_id: a.product_id, amount: a.amount, term_months: a.term_months, purpose: a.purpose,
-        financials: a.financials, contact: a.contact, consent: a.consent,
+  on(
+    root,
+    'click',
+    '[data-product]',
+    (_, el) => {
+      p = product(el.dataset.product);
+      a.product_id = p.id;
+      a.amount = Math.min(p.max_amount, Math.max(p.min_amount, a.amount));
+      a.term_months = Math.min(p.max_term, Math.max(p.min_term, a.term_months));
+      a.purpose = p.purposes[0];
+      $$('[data-product]', root).forEach((c) => {
+        const isOn = c === el;
+        c.classList.toggle('is-on', isOn);
+        c.setAttribute('aria-checked', isOn);
       });
-      putApp(await api('POST', `/applications/${id}/submit`));
-      navigate(`/cabinet/applications/${id}`);
-    } catch (e) {
-      toast(e.message, { error: true });
-      $$('.field--error', root).forEach((f) => f.classList.remove('field--error'));
-      const field = e.field && $(`[data-field="${e.field}"]`, root);
-      if (field) { field.classList.add('field--error'); field.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-      btn.disabled = false;
-      btn.textContent = 'Отправить на решение';
-    }
-  }, signal);
+      $('h1', root).textContent = `Анкета · ${p.name}`;
+      save({ product_id: p.id, amount: a.amount, term_months: a.term_months, purpose: a.purpose });
+      paintCalc();
+      quoter(p.id, a.amount, a.term_months);
+      refresh();
+    },
+    signal,
+  );
+  on(
+    root,
+    'click',
+    '[data-purpose]',
+    (_, el) => {
+      a.purpose = el.dataset.purpose;
+      save({ purpose: a.purpose });
+      paintPurposes();
+    },
+    signal,
+  );
+  on(
+    root,
+    'click',
+    '[data-use-fns]',
+    () => {
+      a.financials.annual_revenue = a.company.revenue_last_year;
+      $('#f-revenue', root).value = fmt(a.financials.annual_revenue);
+      save({ financials: { ...a.financials } });
+      refresh();
+    },
+    signal,
+  );
+  on(
+    root,
+    'click',
+    '[data-retry]',
+    () => {
+      saveError = null;
+      paintSaveState();
+      flush();
+    },
+    signal,
+  );
+  on(
+    root,
+    'input',
+    '[data-money]',
+    (_, el) => {
+      const v = +digits(el.value);
+      el.value = v ? fmt(v) : '';
+      a.financials[el.dataset.money] = v;
+      save({ financials: { ...a.financials } });
+      refresh();
+    },
+    signal,
+  );
+  on(
+    root,
+    'input',
+    '[data-contact]',
+    (_, el) => {
+      if (el.dataset.contact === 'phone') el.value = phone(el.value);
+      a.contact[el.dataset.contact] = el.value;
+      save({ contact: { ...a.contact } });
+      refresh();
+    },
+    signal,
+  );
+  on(
+    root,
+    'change',
+    '#f-consent',
+    (_, el) => {
+      a.consent = el.checked;
+      save({ consent: a.consent });
+      refresh();
+    },
+    signal,
+  );
+
+  on(
+    root,
+    'click',
+    '#submit',
+    async (_, btn) => {
+      btn.disabled = true;
+      btn.textContent = 'Отправляем…';
+      try {
+        // сначала досохраняем анкету — нельзя отправлять, если правки не дошли до сервера
+        while (saving) await new Promise((r) => setTimeout(r, 100));
+        flushSoon.cancel();
+        await flush();
+        if (saveError) throw new Error(`Анкета не сохранена (${saveError}). Проверьте связь и нажмите «Повторить».`);
+        await api('PATCH', `/applications/${id}`, {
+          product_id: a.product_id,
+          amount: a.amount,
+          term_months: a.term_months,
+          purpose: a.purpose,
+          financials: a.financials,
+          contact: a.contact,
+          consent: a.consent,
+        });
+        putApp(await api('POST', `/applications/${id}/submit`));
+        navigate(`/cabinet/applications/${id}`);
+      } catch (e) {
+        toast(e.message, { error: true });
+        $$('.field--error', root).forEach((f) => f.classList.remove('field--error'));
+        const field = e.field && $(`[data-field="${e.field}"]`, root);
+        if (field) {
+          field.classList.add('field--error');
+          field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        btn.disabled = false;
+        btn.textContent = 'Отправить на решение';
+      }
+    },
+    signal,
+  );
 }

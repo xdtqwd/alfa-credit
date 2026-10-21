@@ -15,12 +15,14 @@ export const empty = (title, text, action = '') => `<div class="empty"><h3>${esc
 /** Этапы заявки: шесть шагов от анкеты до денег на счёте. */
 export function stepper(a, stages, stageOf, busy) {
   const idx = stageOf[a.status];
-  return `<ol class="stepper">${stages.map((label, i) => {
-    let cls = i < idx ? 'is-done' : i === idx ? 'is-current' : '';
-    if (i === idx && ['issued', 'closed'].includes(a.status)) cls = 'is-done';
-    if (i === idx && a.status === 'rejected') cls = 'is-failed';
-    if (i === idx && busy) cls += ' is-busy';
-    const mark = cls.startsWith('is-done') ? icon('check', 18) : cls === 'is-failed' ? icon('cross', 18) : i + 1;
-    return `<li class="step ${cls}"><span class="step__dot">${mark}</span><span>${label}</span></li>`;
-  }).join('')}</ol>`;
+  return `<ol class="stepper">${stages
+    .map((label, i) => {
+      let cls = i < idx ? 'is-done' : i === idx ? 'is-current' : '';
+      if (i === idx && ['issued', 'closed'].includes(a.status)) cls = 'is-done';
+      if (i === idx && a.status === 'rejected') cls = 'is-failed';
+      if (i === idx && busy) cls += ' is-busy';
+      const mark = cls.startsWith('is-done') ? icon('check', 18) : cls === 'is-failed' ? icon('cross', 18) : i + 1;
+      return `<li class="step ${cls}"><span class="step__dot">${mark}</span><span>${label}</span></li>`;
+    })
+    .join('')}</ol>`;
 }

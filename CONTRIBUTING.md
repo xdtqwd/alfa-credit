@@ -40,7 +40,9 @@ git switch main && git pull && git branch -d feature/short-name
 | Задача | Что внутри |
 |---|---|
 | **Go** | `go mod verify`, `gofmt`, `go vet`, все тесты с race-детектором на настоящих PostgreSQL 16 и Kafka, гонки при оплате и идемпотентности ×20 |
-| **Полный стек** | `docker compose up --build` (api, worker, PostgreSQL, Kafka), 25 браузерных e2e, сквозная самопроверка `/selfcheck`, отказ Kafka и восстановление без потери заявок |
+| **Фронтенд** | ESLint, Prettier (`.prettierrc.json`), проверка необъявленных CSS-переменных и классов со словом `default`, юнит-тесты чистых модулей (`tests/unit`): `cd tests/lint && npm ci && npm run lint`, автоформат — `npm run format:fix` |
+| **Название PR** | название PR и все коммиты ветки — в формате Conventional Commits |
+| **Полный стек** | `docker compose up --build` (api, worker, PostgreSQL, Kafka), 26 браузерных e2e, сквозная самопроверка `/selfcheck`, отказ Kafka и восстановление без потери заявок |
 
 При падении в артефактах сборки лежат логи всех контейнеров и скриншоты упавших e2e.
 
@@ -49,5 +51,5 @@ git switch main && git pull && git branch -d feature/short-name
 GitHub → **Settings → Branches → Add branch ruleset** (или *Branch protection rule*) для `main`:
 
 - **Require a pull request before merging**;
-- **Require status checks to pass** → отметить `Go — тесты на PostgreSQL и Kafka` и `Полный стек — e2e, самопроверка, отказ Kafka` (появятся в списке после первого запуска CI);
+- **Require status checks to pass** → отметить `Go — тесты на PostgreSQL и Kafka`, `Фронтенд — линтеры, CSS-переменные, юнит-тесты`, `Название PR и коммиты — Conventional Commits` и `Полный стек — e2e, самопроверка, отказ Kafka` (появятся в списке после первого запуска CI);
 - **Block force pushes**.

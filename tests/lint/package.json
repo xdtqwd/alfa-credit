@@ -1,0 +1,18 @@
+{
+  "name": "alfa-credit-lint",
+  "private": true,
+  "type": "module",
+  "description": "Проверки фронтенда: ESLint, Prettier, CSS-переменные и юнит-тесты чистых модулей. Запуск: cd tests/lint && npm ci && npm run lint",
+  "scripts": {
+    "lint": "npm run eslint && npm run format && npm run css-vars && npm run unit",
+    "eslint": "cd ../.. && eslint backend/web/static/js tests/e2e tests/lint tests/unit",
+    "format": "cd ../.. && prettier --check \"backend/web/static/**/*.{js,css}\" \"tests/**/*.mjs\"",
+    "format:fix": "cd ../.. && prettier --write \"backend/web/static/**/*.{js,css}\" \"tests/**/*.mjs\"",
+    "css-vars": "node css-vars.mjs",
+    "unit": "cd ../.. && node --test tests/unit/*.test.mjs"
+  },
+  "devDependencies": {
+    "eslint": "9.17.0",
+    "prettier": "3.4.2"
+  }
+}

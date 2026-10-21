@@ -12,15 +12,21 @@ function kpis(rows) {
   const count = (statuses) => rows.filter((r) => statuses.includes(r.status)).length;
   const scored = rows.filter((r) => r.score != null);
   const avgScore = scored.length ? Math.round(scored.reduce((s, r) => s + r.score, 0) / scored.length) : '—';
-  const times = rows.map((r) => {
-    const sent = r.history.find((h) => h.status === 'submitted');
-    const decided = r.history.find((h) => DECIDED.includes(h.status));
-    return sent && decided ? (new Date(decided.at) - new Date(sent.at)) / 1000 : null;
-  }).filter((x) => x != null);
+  const times = rows
+    .map((r) => {
+      const sent = r.history.find((h) => h.status === 'submitted');
+      const decided = r.history.find((h) => DECIDED.includes(h.status));
+      return sent && decided ? (new Date(decided.at) - new Date(sent.at)) / 1000 : null;
+    })
+    .filter((x) => x != null);
   const avgTime = times.length ? `${Math.round(times.reduce((a, b) => a + b, 0) / times.length)} с` : '—';
   const items = [
-    ['Всего заявок', rows.length], ['В конвейере', count(IN_PIPELINE)], ['Одобрено / выдано', count(['approved', 'counter_offer', 'signing', 'issued'])],
-    ['Отказ', count(['rejected'])], ['Средний балл', avgScore], ['Время до решения', avgTime],
+    ['Всего заявок', rows.length],
+    ['В конвейере', count(IN_PIPELINE)],
+    ['Одобрено / выдано', count(['approved', 'counter_offer', 'signing', 'issued'])],
+    ['Отказ', count(['rejected'])],
+    ['Средний балл', avgScore],
+    ['Время до решения', avgTime],
   ];
   return `<div class="kpis">${items.map(([label, value]) => `<div class="kpi"><span>${label}</span><b>${value}</b></div>`).join('')}</div>`;
 }
@@ -28,8 +34,10 @@ function kpis(rows) {
 function platform(p) {
   if (!p) return '';
   const chip = (ok, label, value) => `<span class="${ok ? '' : 'is-warn'}">${label}${value != null ? ` <b>${esc(value)}</b>` : ''}</span>`;
-  const caches = (p.caches || []).filter((c) => CACHE_NAMES[c.name] && c.hits + c.misses >= 20)
-    .map((c) => chip(true, `Кэш ${CACHE_NAMES[c.name]}`, `${Math.round(c.hit_rate * 100)}%`)).join('');
+  const caches = (p.caches || [])
+    .filter((c) => CACHE_NAMES[c.name] && c.hits + c.misses >= 20)
+    .map((c) => chip(true, `Кэш ${CACHE_NAMES[c.name]}`, `${Math.round(c.hit_rate * 100)}%`))
+    .join('');
   return `<div class="platform" aria-label="Состояние платформы">
     ${chip(true, 'Хранилище', p.storage === 'postgres' ? 'PostgreSQL' : 'файлы')}
     ${chip(true, 'Шина событий', p.bus === 'kafka' ? 'Kafka' : 'in-memory')}
@@ -39,13 +47,16 @@ function platform(p) {
   </div>`;
 }
 
-const checkDots = (checks) => `<span class="checks-dots">${checks.map((c) => `<i class="${c.result}" title="${esc(`${c.name}: ${c.details}`)}"></i>`).join('')}</span>`;
+const checkDots = (checks) =>
+  `<span class="checks-dots">${checks.map((c) => `<i class="${c.result}" title="${esc(`${c.name}: ${c.details}`)}"></i>`).join('')}</span>`;
 
 function table(rows) {
   if (!rows.length) return '<div class="empty">Заявок пока нет — оформите кредит на главной</div>';
   return `<div class="table-wrap"><table class="table">
     <thead><tr><th>№</th><th>Компания</th><th>Продукт</th><th class="num">Запрошено</th><th>Статус</th><th class="num">Балл</th><th>Решение</th><th>Проверки</th><th>Обновлено</th></tr></thead>
-    <tbody>${rows.map((r) => `<tr>
+    <tbody>${rows
+      .map(
+        (r) => `<tr>
       <td class="nowrap"><b>${esc(r.number)}</b></td>
       <td>${r.company ? `${esc(r.company.name)}<div class="xsmall muted">ИНН ${esc(r.inn)}</div>` : '—'}</td>
       <td>${esc(product(r.product_id)?.name)}</td>
@@ -55,7 +66,9 @@ function table(rows) {
       <td class="small">${r.decision ? `${r.decision.amount ? `${rub(r.decision.amount)} · ${rate(r.decision.rate)}` : ''}<div class="muted">${esc(r.decision.reasons?.[0] || '')}</div>` : '—'}</td>
       <td>${checkDots(r.checks)}</td>
       <td class="xsmall muted nowrap">${dateTime(r.updated_at)}</td>
-    </tr>`).join('')}</tbody></table></div>`;
+    </tr>`,
+      )
+      .join('')}</tbody></table></div>`;
 }
 
 export default async function bank(root, { signal }) {

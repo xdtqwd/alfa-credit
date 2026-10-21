@@ -18,18 +18,25 @@
   <main id="view" class="page"></main>
 
   <footer class="footer">
-    <div class="container footer__in">
-      <div>
-        <b>Альфа Бизнес · Кредиты для бизнеса</b>
-        <p>Прототип для хакатона «Альфа Хак». Все компании, суммы и ставки синтетические, внешние сервисы — локальные заглушки.</p>
+    <div class="container">
+      <p class="footer__crumbs">Альфа Бизнес <span aria-hidden="true">›</span> Кредиты для бизнеса</p>
+      <div class="footer__grid">
+        <div class="footer__col">
+          <span class="footer__title">О проекте</span>
+          <p>Прототип для хакатона «Альфа Хак». Все компании, суммы и ставки синтетические, внешние сервисы — локальные заглушки.</p>
+        </div>
+        <nav class="footer__col" aria-label="Разделы">
+          <span class="footer__title">Разделы</span>
+          <a href="#/" data-section="products">Кредиты</a>
+          <a href="#/" data-section="calc">Калькулятор</a>
+          <a href="#/" data-section="how">Как получить</a>
+          <a href="#/" data-section="faq">Вопросы</a>
+        </nav>
+        <nav class="footer__col" aria-label="Для сотрудников">
+          <span class="footer__title">Для сотрудников</span>
+          <a href="#/bank">Кабинет банка</a>
+        </nav>
       </div>
-      <nav class="footer__links" aria-label="Разделы">
-        <a href="#/" data-section="products">Кредиты</a>
-        <a href="#/" data-section="calc">Калькулятор</a>
-        <a href="#/" data-section="how">Как получить</a>
-        <a href="#/" data-section="faq">Вопросы</a>
-        <a href="#/bank">Кабинет банка</a>
-      </nav>
     </div>
   </footer>
 

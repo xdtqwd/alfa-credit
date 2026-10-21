@@ -7,9 +7,10 @@
  */
 const IDEMPOTENT = /^\/applications(\/[^/]+\/(submit|accept|sign|pay|cancel))?$/;
 
-const newKey = () => (crypto.randomUUID
-  ? crypto.randomUUID()
-  : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join(''));
+const newKey = () =>
+  crypto.randomUUID
+    ? crypto.randomUUID()
+    : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
 export class ApiError extends Error {
   constructor(message, { status = 0, field = '', code = '', offline = false } = {}) {
@@ -20,7 +21,9 @@ export class ApiError extends Error {
 
 let onUnauthorized = () => {};
 /** Что делать, если сессия истекла посреди работы (выход из кабинета). */
-export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
+export const setUnauthorizedHandler = (fn) => {
+  onUnauthorized = fn;
+};
 
 export async function api(method, path, body, headers = {}) {
   if (navigator.onLine === false) throw new ApiError('Нет подключения к интернету', { offline: true });
@@ -28,19 +31,24 @@ export async function api(method, path, body, headers = {}) {
   const hdrs = { 'Content-Type': 'application/json', ...headers };
   if (idempotent && !hdrs['Idempotency-Key']) hdrs['Idempotency-Key'] = newKey();
 
-  const send = () => fetch(`/api/v1${path}`, {
-    method,
-    credentials: 'same-origin',
-    headers: hdrs,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  const send = () =>
+    fetch(`/api/v1${path}`, {
+      method,
+      credentials: 'same-origin',
+      headers: hdrs,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   let res;
   try {
     res = await send();
   } catch {
     if (!idempotent) throw new ApiError('Нет связи с сервером', { offline: true });
     await new Promise((r) => setTimeout(r, 700)); // повтор безопасен: тот же Idempotency-Key
-    try { res = await send(); } catch { throw new ApiError('Нет связи с сервером', { offline: true }); }
+    try {
+      res = await send();
+    } catch {
+      throw new ApiError('Нет связи с сервером', { offline: true });
+    }
   }
 
   const data = res.status === 204 ? null : await res.json().catch(() => null);
@@ -58,8 +66,13 @@ export function quote(productId, amount, term) {
   const key = `${productId}|${amount}|${term}`;
   if (!quotes.has(key)) {
     if (quotes.size > 300) quotes.clear();
-    quotes.set(key, api('POST', '/calc', { product_id: productId, amount, term_months: term })
-      .catch((e) => { quotes.delete(key); throw e; }));
+    quotes.set(
+      key,
+      api('POST', '/calc', { product_id: productId, amount, term_months: term }).catch((e) => {
+        quotes.delete(key);
+        throw e;
+      }),
+    );
   }
   return quotes.get(key);
 }

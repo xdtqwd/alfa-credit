@@ -22,14 +22,26 @@ async function caption(page, text, ms = 2200) {
       el = document.createElement('div');
       el.id = '__demo_caption';
       Object.assign(el.style, {
-        position: 'fixed', left: '50%', bottom: '24px', transform: 'translateX(-50%)', zIndex: 99999,
-        maxWidth: '900px', padding: '14px 22px', borderRadius: '16px', background: 'rgba(17,24,39,.92)',
-        color: '#fff', font: '600 18px/1.4 system-ui, sans-serif', textAlign: 'center',
-        boxShadow: '0 12px 32px rgba(0,0,0,.25)', pointerEvents: 'none', transition: 'opacity .25s',
+        position: 'fixed',
+        left: '50%',
+        bottom: '24px',
+        transform: 'translateX(-50%)',
+        zIndex: 99999,
+        maxWidth: '900px',
+        padding: '14px 22px',
+        borderRadius: '16px',
+        background: 'rgba(17,24,39,.92)',
+        color: '#fff',
+        font: '600 18px/1.4 system-ui, sans-serif',
+        textAlign: 'center',
+        boxShadow: '0 12px 32px rgba(0,0,0,.25)',
+        pointerEvents: 'none',
+        transition: 'opacity .25s',
       });
       document.body.appendChild(el);
     }
-    el.textContent = t; el.style.opacity = t ? '1' : '0';
+    el.textContent = t;
+    el.style.opacity = t ? '1' : '0';
   }, text);
   if (ms) await sleep(ms);
 }
@@ -75,7 +87,10 @@ async function fillAndSubmit(page) {
       const box = await range.boundingBox();
       await page.mouse.move(box.x + box.width * 0.15, box.y + box.height / 2);
       await page.mouse.down();
-      for (let i = 1; i <= 10; i++) { await page.mouse.move(box.x + box.width * (0.15 + i * 0.02), box.y + box.height / 2); await sleep(70); }
+      for (let i = 1; i <= 10; i++) {
+        await page.mouse.move(box.x + box.width * (0.15 + i * 0.02), box.y + box.height / 2);
+        await sleep(70);
+      }
       await page.mouse.up();
       await sleep(900);
     }
@@ -95,7 +110,11 @@ async function fillAndSubmit(page) {
     await page.goto(BASE + '/#/bank');
     await page.waitForSelector('#bank-table table');
     await caption(page, 'Кабинет сотрудника банка: заявка идёт по конвейеру — события через Kafka, данные в PostgreSQL', 0);
-    await page.waitForFunction(() => /Одобрено|Контрпредложение|Отказ|Уточнение/.test(document.querySelector('#bank-table tbody tr')?.textContent || ''), null, { timeout: 30000 });
+    await page.waitForFunction(
+      () => /Одобрено|Контрпредложение|Отказ|Уточнение/.test(document.querySelector('#bank-table tbody tr')?.textContent || ''),
+      null,
+      { timeout: 30000 },
+    );
     await caption(page, 'Скоринг принял решение: балл, условия и причина видны банку', 3000);
 
     // 4. Клиент видит результат, подписывает, получает деньги и платит
@@ -113,7 +132,9 @@ async function fillAndSubmit(page) {
     await page.waitForSelector('#pay-ok');
     await sleep(800);
     await page.click('#pay-ok');
-    await page.waitForFunction(() => /Оплачено 1 из/.test(document.querySelector('#pay-line')?.textContent || ''), null, { timeout: 10000 });
+    await page.waitForFunction(() => /Оплачено 1 из/.test(document.querySelector('#pay-line')?.textContent || ''), null, {
+      timeout: 10000,
+    });
     await caption(page, 'Первый платёж списан со счёта строго по графику', 2500);
 
     // 5. Личный кабинет
@@ -150,4 +171,7 @@ async function fillAndSubmit(page) {
       console.log('Видео не записано', readdirSync(join(OUT, '_raw')));
     }
   }
-})().catch((e) => { console.error(e); process.exit(1); });
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

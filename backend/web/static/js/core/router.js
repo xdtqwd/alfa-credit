@@ -7,7 +7,12 @@ const redirects = [];
 /** Регистрирует экран. path вида '/cabinet/applications/:id'. */
 export function route(path, page, meta = {}) {
   const keys = [];
-  const re = new RegExp(`^${path.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; })}/?$`);
+  const re = new RegExp(
+    `^${path.replace(/:(\w+)/g, (_, k) => {
+      keys.push(k);
+      return '([^/]+)';
+    })}/?$`,
+  );
   routes.push({ re, keys, page, meta });
 }
 

@@ -1,33 +1,51 @@
 // Калькулятор: сумма и срок — ползунком или числом с клавиатуры, платёж считает сервер (единый источник расчёта).
 import { quote } from '../core/api.js';
 import { $, debounce } from '../core/dom.js';
-import { fmt, rub, months, digits } from '../core/format.js';
+import { fmt, rub, months, digits, shortRub, shortTerm } from '../core/format.js';
 
 const pct = (v, min, max) => (max === min ? 100 : ((v - min) / (max - min)) * 100);
+
+/**
+ * Поле с ползунком, как в калькуляторах alfabank.ru: серая плашка с подписью и крупным значением,
+ * ползунок лежит на её нижнем крае, под ним шкала из трёх отметок.
+ */
+const slider = ({ key, label, value, text, min, max, step, scale }) => `
+  <div class="calc__field">
+    <label class="slider">
+      <span class="slider__label">${label}</span>
+      <input class="slider__value" data-calc="${key}-text" inputmode="numeric" value="${text}" aria-label="${label}">
+      <input class="range" type="range" data-calc="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${pct(value, min, max)}%" aria-label="${label}, ползунок">
+    </label>
+    <div class="range-scale">${[min, (min + max) / 2, max].map((v) => `<span>${scale(v)}</span>`).join('')}</div>
+  </div>`;
 
 /** Разметка полей суммы и срока. У продукта с фиксированным сроком (овердрафт) — без ползунка. */
 export function calcFields(p, amount, term) {
   const fixed = p.min_term === p.max_term;
   return `
-    <div class="calc__field">
-      <div class="calc__label"><span>Сумма кредита</span><span>от ${fmt(p.min_amount)} до ${fmt(p.max_amount)} ₽</span></div>
-      <input class="input input--lg" data-calc="amount-text" inputmode="numeric" value="${fmt(amount)} ₽" aria-label="Сумма кредита">
-      <input class="range" type="range" data-calc="amount" min="${p.min_amount}" max="${p.max_amount}" step="10000" value="${amount}" style="--p:${pct(amount, p.min_amount, p.max_amount)}%" aria-label="Сумма кредита, ползунок">
-      <div class="range-scale"><span>${fmt(p.min_amount)}</span><span>${fmt(p.max_amount)}</span></div>
-    </div>
-    ${fixed ? `
+    ${slider({ key: 'amount', label: 'Сумма кредита', value: amount, text: `${fmt(amount)} ₽`, min: p.min_amount, max: p.max_amount, step: 10000, scale: shortRub })}
+    ${
+      fixed
+        ? `
     <div class="calc__field" data-calc-fixed>
-      <div class="calc__label"><span>Срок</span><span>фиксированный</span></div>
-      <input class="input input--lg" data-calc="term-text" value="${months(p.min_term)}" readonly tabindex="-1">
-      <input type="hidden" data-calc="term" value="${p.min_term}">
+      <div class="slider slider--fixed">
+        <span class="slider__label">Срок кредита · фиксированный</span>
+        <input class="slider__value" data-calc="term-text" value="${months(p.min_term)}" readonly tabindex="-1">
+        <input type="hidden" data-calc="term" value="${p.min_term}">
+      </div>
       <p class="calc__note">Лимит открывается на ${months(p.min_term)}, потом его можно продлить.</p>
-    </div>` : `
-    <div class="calc__field">
-      <div class="calc__label"><span>Срок</span><span>от ${months(p.min_term)} до ${months(p.max_term)}</span></div>
-      <input class="input input--lg" data-calc="term-text" inputmode="numeric" value="${months(term)}" aria-label="Срок кредита, месяцев">
-      <input class="range" type="range" data-calc="term" min="${p.min_term}" max="${p.max_term}" step="1" value="${term}" style="--p:${pct(term, p.min_term, p.max_term)}%" aria-label="Срок кредита, ползунок">
-      <div class="range-scale"><span>${months(p.min_term)}</span><span>${months(p.max_term)}</span></div>
-    </div>`}`;
+    </div>`
+        : slider({
+            key: 'term',
+            label: 'Срок кредита',
+            value: term,
+            text: months(term),
+            min: p.min_term,
+            max: p.max_term,
+            step: 1,
+            scale: (v) => shortTerm(Math.round(v)),
+          })
+    }`;
 }
 
 /**
@@ -46,11 +64,25 @@ function linkField(text, range, show, onChange) {
   range.addEventListener('input', () => apply(+range.value));
 
   let justFocused = false;
-  text.addEventListener('focus', () => { text.value = fmt(range.value); text.select(); justFocused = true; });
-  text.addEventListener('mouseup', (e) => { if (justFocused) { e.preventDefault(); justFocused = false; } });
-  text.addEventListener('input', () => { const v = +digits(text.value); text.value = v ? fmt(v) : ''; });
+  text.addEventListener('focus', () => {
+    text.value = fmt(range.value);
+    text.select();
+    justFocused = true;
+  });
+  text.addEventListener('mouseup', (e) => {
+    if (justFocused) {
+      e.preventDefault();
+      justFocused = false;
+    }
+  });
+  text.addEventListener('input', () => {
+    const v = +digits(text.value);
+    text.value = v ? fmt(v) : '';
+  });
   text.addEventListener('blur', () => apply(+digits(text.value)));
-  text.addEventListener('keydown', (e) => { if (e.key === 'Enter') text.blur(); });
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') text.blur();
+  });
 }
 
 /** Подключает поля калькулятора. onChange({ amount, term }) — на каждое изменение. */

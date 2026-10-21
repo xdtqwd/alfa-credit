@@ -14,7 +14,9 @@ export async function startApplication(productId, amount = 0, term = 0) {
     const a = await api('POST', '/applications', { product_id: productId, amount, term_months: term });
     putApp(a);
     navigate(`/cabinet/applications/${a.id}`);
-  } catch (e) { toast(e.message, { error: true }); }
+  } catch (e) {
+    toast(e.message, { error: true });
+  }
 }
 
 /** Подписание простой электронной подписью. Возвращает обновлённую заявку или null. */
@@ -23,12 +25,17 @@ export function signDialog(a) {
   const r = session.me.requisites;
   return new Promise((resolve) => {
     let result = null;
-    const { el, close } = openModal(`
+    const { el, close } = openModal(
+      `
       <h2>Подписание документов</h2>
       <p class="modal__lead">Простая электронная подпись — без визита в офис и без SMS.</p>
       <div class="doc-list">
-        ${['Кредитный договор', 'График платежей', 'Заявление на зачисление средств'].map((name) => `
-          <div class="doc"><span class="doc__ic">PDF</span><div>${name}<small>${esc(a.number)} · ${rub(d.amount)}, ${months(d.term_months)}, ${rate(d.rate)}</small></div></div>`).join('')}
+        ${['Кредитный договор', 'График платежей', 'Заявление на зачисление средств']
+          .map(
+            (name) => `
+          <div class="doc"><span class="doc__ic">PDF</span><div>${name}<small>${esc(a.number)} · ${rub(d.amount)}, ${months(d.term_months)}, ${rate(d.rate)}</small></div></div>`,
+          )
+          .join('')}
       </div>
       <dl class="kv">
         <div><dt>Получатель</dt><dd>${esc(session.me.company.name)}</dd></div>
@@ -36,9 +43,13 @@ export function signDialog(a) {
         <div><dt>БИК</dt><dd>${esc(r.bik)}</dd></div>
       </dl>
       <label class="check" id="sign-consent"><input type="checkbox" id="sign-ok"><span>Ознакомился с условиями и подписываю документы простой электронной подписью</span></label>
-      <button class="btn btn--primary btn--block" id="sign-btn" disabled>Подписать</button>`, { onClose: () => resolve(result) });
+      <button class="btn btn--primary btn--block" id="sign-btn" disabled>Подписать</button>`,
+      { onClose: () => resolve(result) },
+    );
     el.classList.add('stack');
-    $('#sign-ok', el).addEventListener('change', (e) => { $('#sign-btn', el).disabled = !e.target.checked; });
+    $('#sign-ok', el).addEventListener('change', (e) => {
+      $('#sign-btn', el).disabled = !e.target.checked;
+    });
     $('#sign-btn', el).addEventListener('click', async (e) => {
       e.currentTarget.disabled = true;
       try {
@@ -62,7 +73,8 @@ export function payDialog(a) {
   const enough = me.balance >= pay;
   return new Promise((resolve) => {
     let result = null;
-    const { el, close } = openModal(`
+    const { el, close } = openModal(
+      `
       <h2>Оплата платежа</h2>
       <p class="modal__lead">${esc(a.number)} · платёж ${(a.payments || []).length + 1} из ${a.term_months}</p>
       <dl class="kv">
@@ -72,7 +84,9 @@ export function payDialog(a) {
         <div><dt>Останется</dt><dd class="${enough ? '' : 'text-bad'}">${rub(me.balance - pay)}</dd></div>
       </dl>
       <p class="field__hint text-bad" id="pay-error" role="alert"></p>
-      <button class="btn btn--primary btn--block" id="pay-ok" ${enough ? '' : 'disabled'}>${enough ? `Оплатить ${rub(pay)}` : 'Недостаточно средств'}</button>`, { onClose: () => resolve(result) });
+      <button class="btn btn--primary btn--block" id="pay-ok" ${enough ? '' : 'disabled'}>${enough ? `Оплатить ${rub(pay)}` : 'Недостаточно средств'}</button>`,
+      { onClose: () => resolve(result) },
+    );
     el.classList.add('stack');
     $('#pay-ok', el).addEventListener('click', async (e) => {
       e.currentTarget.disabled = true;
@@ -106,5 +120,10 @@ export function requisitesText(me = session.me) {
 }
 
 export async function copy(text, done = 'Скопировано') {
-  try { await copyText(text); toast(done); } catch { toast('Не удалось скопировать — выделите текст вручную', { error: true }); }
+  try {
+    await copyText(text);
+    toast(done);
+  } catch {
+    toast('Не удалось скопировать — выделите текст вручную', { error: true });
+  }
 }

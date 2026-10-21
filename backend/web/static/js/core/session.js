@@ -62,7 +62,8 @@ export function setMe(user) {
 /** Обновить одну заявку в кэше после действия (не дожидаясь фонового опроса). */
 export function putApp(app) {
   const i = session.apps.findIndex((a) => a.id === app.id);
-  if (i >= 0) session.apps[i] = app; else session.apps.unshift(app);
+  if (i >= 0) session.apps[i] = app;
+  else session.apps.unshift(app);
   emit();
 }
 
@@ -89,6 +90,8 @@ export function startPolling(onChanges) {
     try {
       const changes = await refresh();
       if (changes.length) onChanges(changes);
-    } catch { /* сеть: повторим на следующем тике */ }
+    } catch {
+      /* сеть: повторим на следующем тике */
+    }
   }, 3000);
 }

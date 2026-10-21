@@ -9,7 +9,7 @@ import { pageHead, empty } from './parts.js';
 
 function loanHtml(a) {
   const paid = (a.payments || []).length;
-  const rest = paid ? a.schedule?.[paid - 1]?.rest ?? 0 : a.amount;
+  const rest = paid ? (a.schedule?.[paid - 1]?.rest ?? 0) : a.amount;
   const issuedAt = a.history.find((h) => h.status === 'issued')?.at || a.updated_at;
   const open = a.status === 'issued';
   return `
@@ -38,14 +38,30 @@ export default async function credits(root, { signal }) {
     root.innerHTML = `<div class="container">
       ${pageHead('Кредиты', 'Платёж списывается с расчётного счёта — оплатить можно в любой момент')}
       <section class="card">
-        ${loans.length ? loans.map(loanHtml).join('')
-          : empty('Выданных кредитов пока нет', 'Когда вы подпишете договор, кредит появится здесь вместе с графиком и кнопкой оплаты.', '<button class="btn btn--primary" data-new-loan>Оформить кредит</button>')}
+        ${
+          loans.length
+            ? loans.map(loanHtml).join('')
+            : empty(
+                'Выданных кредитов пока нет',
+                'Когда вы подпишете договор, кредит появится здесь вместе с графиком и кнопкой оплаты.',
+                '<button class="btn btn--primary" data-new-loan>Оформить кредит</button>',
+              )
+        }
       </section>
     </div>`;
   };
   draw();
   const unsubscribe = subscribe(draw);
   signal.addEventListener('abort', unsubscribe, { once: true });
-  on(root, 'click', '[data-pay]', (_, el) => { const a = session.apps.find((x) => x.id === el.dataset.pay); if (a) payDialog(a); }, signal);
+  on(
+    root,
+    'click',
+    '[data-pay]',
+    (_, el) => {
+      const a = session.apps.find((x) => x.id === el.dataset.pay);
+      if (a) payDialog(a);
+    },
+    signal,
+  );
   on(root, 'click', '[data-new-loan]', () => startApplication('business-dev'), signal);
 }

@@ -6,7 +6,7 @@ import { session, signIn, signOut, refresh } from '../core/session.js';
 import { openModal, toast } from '../ui/feedback.js';
 import { icon, logoSign } from '../ui/icons.js';
 
-export const DEMO_PASSWORD = 'demo1234';
+const DEMO_PASSWORD = 'demo1234';
 const DEMO_ACCOUNTS = [
   ['79000000001', 'ООО «Северный ветер»', 'одобрение'],
   ['79000000002', 'ООО «Алтайские сыроварни»', 'другие условия от 15 млн'],
@@ -25,8 +25,10 @@ const loginForm = () => `
   </form>
   <div class="demo">
     <p class="small muted">Демо-аккаунты, пароль <code>${DEMO_PASSWORD}</code></p>
-    ${DEMO_ACCOUNTS.map(([ph, name, hint]) => `
-      <button type="button" class="demo__item" data-demo="${ph}"><b>${esc(name)}</b><small>${phone(ph)} · ${esc(hint)}</small></button>`).join('')}
+    ${DEMO_ACCOUNTS.map(
+      ([ph, name, hint]) => `
+      <button type="button" class="demo__item" data-demo="${ph}"><b>${esc(name)}</b><small>${phone(ph)} · ${esc(hint)}</small></button>`,
+    ).join('')}
   </div>`;
 
 const registerForm = () => `
@@ -52,18 +54,29 @@ const registerForm = () => `
 export function openAuth({ reason = '', tab = 'login' } = {}) {
   return new Promise((resolve) => {
     let done = false;
-    const { el, close } = openModal(`
+    const { el, close } = openModal(
+      `
       <div class="auth__brand">${logoSign()}<div><b>Альфа Бизнес</b><small>Вход в кредитный кабинет</small></div></div>
       ${reason ? `<p class="auth__reason">${icon('lock', 20)}<span>${esc(reason)}</span></p>` : ''}
       <div class="tabs auth__tabs" role="tablist">
         <button class="tab" data-auth-tab="login" role="tab">Вход</button>
         <button class="tab" data-auth-tab="register" role="tab">Регистрация</button>
       </div>
-      <div id="auth-body"></div>`, { onClose: () => { if (!done) resolve(null); } });
+      <div id="auth-body"></div>`,
+      {
+        label: 'Вход в кредитный кабинет',
+        onClose: () => {
+          if (!done) resolve(null);
+        },
+      },
+    );
 
     const body = $('#auth-body', el);
     const show = (t) => {
-      $$('[data-auth-tab]', el).forEach((b) => { b.classList.toggle('is-on', b.dataset.authTab === t); b.setAttribute('aria-selected', b.dataset.authTab === t); });
+      $$('[data-auth-tab]', el).forEach((b) => {
+        b.classList.toggle('is-on', b.dataset.authTab === t);
+        b.setAttribute('aria-selected', b.dataset.authTab === t);
+      });
       body.innerHTML = t === 'login' ? loginForm() : registerForm();
       bindForm(t);
       // фокус сразу и только если пользователь ещё никуда не нажал — иначе ввод улетал бы в другое поле
@@ -71,19 +84,31 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
     };
 
     const bindForm = (t) => {
-      $$('#auth-phone, #reg-phone', body).forEach((i) => i.addEventListener('input', () => { i.value = phone(i.value); }));
+      $$('#auth-phone, #reg-phone', body).forEach((i) =>
+        i.addEventListener('input', () => {
+          i.value = phone(i.value);
+        }),
+      );
       const inn = $('#reg-inn', body);
-      inn?.addEventListener('input', debounce(async () => {
-        inn.value = digits(inn.value);
-        const hint = $('#reg-company', body);
-        if (![10, 12].includes(inn.value.length)) { hint.textContent = 'Компанию, реквизиты и руководителя подтянем из ЕГРЮЛ'; return; }
-        try {
-          const c = await api('GET', `/companies/${inn.value}`);
-          hint.innerHTML = `<b class="text-ok">${esc(c.name)}</b> · ${esc(c.address)}`;
-          const name = $('#reg-name', body);
-          if (!name.value) name.value = c.director;
-        } catch (e) { hint.innerHTML = `<span class="text-bad">${esc(e.message)}</span>`; }
-      }, 300));
+      inn?.addEventListener(
+        'input',
+        debounce(async () => {
+          inn.value = digits(inn.value);
+          const hint = $('#reg-company', body);
+          if (![10, 12].includes(inn.value.length)) {
+            hint.textContent = 'Компанию, реквизиты и руководителя подтянем из ЕГРЮЛ';
+            return;
+          }
+          try {
+            const c = await api('GET', `/companies/${inn.value}`);
+            hint.innerHTML = `<b class="text-ok">${esc(c.name)}</b> · ${esc(c.address)}`;
+            const name = $('#reg-name', body);
+            if (!name.value) name.value = c.director;
+          } catch (e) {
+            hint.innerHTML = `<span class="text-bad">${esc(e.message)}</span>`;
+          }
+        }, 300),
+      );
 
       $('#auth-form', body).addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -93,9 +118,16 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
         $$('.field--error', body).forEach((f) => f.classList.remove('field--error'));
         btn.disabled = true;
         try {
-          const user = t === 'login'
-            ? await api('POST', '/auth/login', { phone: $('#auth-phone', body).value, password: $('#auth-password', body).value })
-            : await api('POST', '/auth/register', { inn: $('#reg-inn', body).value, full_name: $('#reg-name', body).value, phone: $('#reg-phone', body).value, password: $('#reg-password', body).value, email: '' });
+          const user =
+            t === 'login'
+              ? await api('POST', '/auth/login', { phone: $('#auth-phone', body).value, password: $('#auth-password', body).value })
+              : await api('POST', '/auth/register', {
+                  inn: $('#reg-inn', body).value,
+                  full_name: $('#reg-name', body).value,
+                  phone: $('#reg-phone', body).value,
+                  password: $('#reg-password', body).value,
+                  email: '',
+                });
           signIn(user);
           await refresh({ quiet: true }).catch(() => {});
           done = true;
@@ -131,7 +163,11 @@ export async function requireAuth(reason) {
 }
 
 export async function logout() {
-  try { await api('POST', '/auth/logout'); } catch { /* выходим локально в любом случае */ }
+  try {
+    await api('POST', '/auth/logout');
+  } catch {
+    /* выходим локально в любом случае */
+  }
   signOut();
   toast('Вы вышли из кабинета');
 }

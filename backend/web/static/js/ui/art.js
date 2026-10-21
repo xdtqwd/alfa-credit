@@ -1,4 +1,4 @@
-// Иллюстрации для плиток кредитов на главной: свои SVG в духе сайта Альфа-Банка — объёмные мягкие
+// Иллюстрации главной (первый экран и плитки кредитов): свои SVG в духе сайта Альфа-Банка — объёмные мягкие
 // формы на светло-сером, красный бренда плюс приглушённые фиолетовый, бирюзовый и сталь.
 // Один набор градиентов на все картинки — так плитки выглядят единой серией.
 
@@ -8,18 +8,24 @@ const PALETTE = {
   teal: ['#9BEFE0', '#2EBFA8'],
   steel: ['#E9EEF7', '#9DABC6'],
   ink: ['#4A5254', '#1F2426'],
+  gold: ['#FFE7A8', '#D9A33E'],
+  paper: ['#FFFFFF', '#DDE3EE'],
   gloss: ['rgba(255,255,255,.75)', 'rgba(255,255,255,0)'],
 };
 
 let seq = 0;
 
 /** Оборачивает рисунок: свои id градиентов у каждого экземпляра, чтобы картинки не конфликтовали на странице. */
-function svg(draw) {
+function svg(draw, box = '0 0 200 150', cls = 'art') {
   const p = `a${++seq}`;
   const fill = (name) => `url(#${p}-${name})`;
-  const defs = Object.entries(PALETTE).map(([name, [from, to]]) =>
-    `<linearGradient id="${p}-${name}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient>`).join('');
-  return `<svg class="art" viewBox="0 0 200 150" aria-hidden="true" focusable="false"><defs>${defs}</defs>${draw(fill)}</svg>`;
+  const defs = Object.entries(PALETTE)
+    .map(
+      ([name, [from, to]]) =>
+        `<linearGradient id="${p}-${name}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient>`,
+    )
+    .join('');
+  return `<svg class="${cls}" viewBox="${box}" aria-hidden="true" focusable="false"><defs>${defs}</defs>${draw(fill)}</svg>`;
 }
 
 // ---------- детали ----------
@@ -37,7 +43,8 @@ const card = (f, x, y, w, h, color, rot = 0) => `
     <rect x="${x + w * 0.18}" y="${y + h * 0.7}" width="${w * 0.34}" height="${h * 0.07}" rx="${h * 0.035}" fill="#fff" fill-opacity=".9"/>
   </g>`;
 
-const sparkle = (x, y, s, color = '#EF3124') => `<path d="M${x} ${y - s}C${x + s * 0.18} ${y - s * 0.18} ${x + s * 0.18} ${y - s * 0.18} ${x + s} ${y}C${x + s * 0.18} ${y + s * 0.18} ${x + s * 0.18} ${y + s * 0.18} ${x} ${y + s}C${x - s * 0.18} ${y + s * 0.18} ${x - s * 0.18} ${y + s * 0.18} ${x - s} ${y}C${x - s * 0.18} ${y - s * 0.18} ${x - s * 0.18} ${y - s * 0.18} ${x} ${y - s}Z" fill="${color}"/>`;
+const sparkle = (x, y, s, color = '#EF3124') =>
+  `<path d="M${x} ${y - s}C${x + s * 0.18} ${y - s * 0.18} ${x + s * 0.18} ${y - s * 0.18} ${x + s} ${y}C${x + s * 0.18} ${y + s * 0.18} ${x + s * 0.18} ${y + s * 0.18} ${x} ${y + s}C${x - s * 0.18} ${y + s * 0.18} ${x - s * 0.18} ${y + s * 0.18} ${x - s} ${y}C${x - s * 0.18} ${y - s * 0.18} ${x - s * 0.18} ${y - s * 0.18} ${x} ${y - s}Z" fill="${color}"/>`;
 
 // ---------- рисунки ----------
 const DRAW = {
@@ -81,5 +88,47 @@ const DRAW = {
 
 /** Картинка кредита по id продукта. */
 const PRODUCT_ART = { 'business-dev': 'growth', 'working-capital': 'cycle', equipment: 'van', overdraft: 'toggle' };
+
+/** Купюра: бирюзовая с рамкой и знаком рубля. */
+const bill = (f, x, y, rot) => `
+  <g transform="rotate(${rot} ${x + 80} ${y + 40})">
+    <rect x="${x}" y="${y}" width="160" height="80" rx="10" fill="${f('teal')}"/>
+    <rect x="${x + 8}" y="${y + 8}" width="144" height="64" rx="6" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="2"/>
+    <circle cx="${x + 80}" cy="${y + 40}" r="20" fill="#fff" fill-opacity=".3"/>
+    <text x="${x + 80}" y="${y + 48}" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">₽</text>
+    <rect x="${x}" y="${y}" width="160" height="34" rx="10" fill="${f('gloss')}" opacity=".45"/>
+  </g>`;
+
+/** Первый экран: пачка денег, телефон с графиком роста в приложении и стрелка вверх. */
+export const heroArt = () =>
+  svg(
+    (f) => `
+  <ellipse cx="200" cy="304" rx="160" ry="11" fill="#1F2426" opacity=".10"/>
+  <!-- деньги -->
+  ${bill(f, 14, 196, -14)}
+  ${bill(f, 26, 214, -4)}
+  ${bill(f, 40, 228, 6)}
+  <!-- стрелка вверх за телефоном -->
+  <path d="M300 298 V128 H270 L326 46 L382 128 H352 V298 Z" fill="${f('gold')}"/>
+  <path d="M326 46 L382 128 H352 V298 H330 V128 Z" fill="#000" opacity=".1"/>
+  <!-- телефон -->
+  <rect x="134" y="20" width="160" height="286" rx="30" fill="${f('ink')}"/>
+  <rect x="144" y="30" width="140" height="266" rx="22" fill="${f('paper')}"/>
+  <rect x="194" y="38" width="40" height="8" rx="4" fill="#1F2426"/>
+  <!-- экран: шапка приложения, график, кнопка -->
+  <rect x="158" y="62" width="58" height="8" rx="4" fill="#1F2426" opacity=".75"/>
+  <rect x="158" y="78" width="96" height="14" rx="5" fill="#1F2426" opacity=".9"/>
+  ${[0, 1, 2, 3].map((i) => `<line x1="158" x2="270" y1="${118 + i * 30}" y2="${118 + i * 30}" stroke="#9DABC6" stroke-opacity=".45" stroke-dasharray="2 6"/>`).join('')}
+  <path d="M160 196 C180 170 196 206 214 180 S246 120 270 132" fill="none" stroke="${f('teal')}" stroke-width="7" stroke-linecap="round"/>
+  <path d="M160 214 C182 196 200 226 220 200 S250 150 270 158" fill="none" stroke="${f('red')}" stroke-width="7" stroke-linecap="round"/>
+  <rect x="158" y="246" width="112" height="30" rx="10" fill="${f('red')}"/>
+  <rect x="186" y="257" width="56" height="8" rx="4" fill="#fff" opacity=".9"/>
+  <rect x="144" y="30" width="140" height="110" rx="22" fill="${f('gloss')}" opacity=".35"/>
+  <!-- монета -->
+  ${coin(f, 330, 262, 40, 'red')}
+`,
+    '0 0 400 320',
+    'art art--hero',
+  );
 
 export const productArt = (productId) => svg(DRAW[PRODUCT_ART[productId]] || DRAW.growth);

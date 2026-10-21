@@ -18,7 +18,7 @@ import messages from './pages/messages.js';
 import bank from './pages/bank.js';
 
 // ---------- маршруты ----------
-route('/', landing, { area: 'site' });
+route('/', landing, { area: 'site', platinum: true }); // главная — платиновая тема для предпринимателей
 route('/cabinet', profile, { area: 'cabinet', tab: 'profile', auth: true });
 route('/cabinet/applications', applications, { area: 'cabinet', tab: 'applications', auth: true });
 route('/cabinet/applications/:id', application, { area: 'cabinet', tab: 'applications', auth: true });
@@ -54,7 +54,9 @@ function gate(root, signal) {
     <p>Заявки, кредиты, реквизиты и оплата доступны только после входа — так данные и деньги компании под защитой.</p>
     <button class="btn btn--primary" data-gate-login>${icon('lock', 20)} Войти</button>
   </section></div>`;
-  const ask = async () => { if (await openAuth({ reason: 'Кабинет компании доступен после входа.' }) && !signal.aborted) render(); };
+  const ask = async () => {
+    if ((await openAuth({ reason: 'Кабинет компании доступен после входа.' })) && !signal.aborted) render();
+  };
   on(root, 'click', '[data-gate-login]', ask, signal);
   ask();
 }
@@ -69,7 +71,7 @@ async function render() {
   controller = new AbortController();
   const { signal } = controller;
   closeModal();
-  renderHeader({ area: m.meta.area, tab: m.meta.tab || '' });
+  renderHeader({ area: m.meta.area, tab: m.meta.tab || '', platinum: !!m.meta.platinum });
   const root = freshRoot();
   const scroll = takeScroll();
   if (!scroll) window.scrollTo(0, 0);
@@ -114,12 +116,16 @@ async function boot() {
     if (match(currentPath())?.meta.auth) render();
   });
   // ссылки на разделы главной из подвала
-  on(document.body, 'click', '.footer [data-section]', (e, el) => { e.preventDefault(); navigate('/', { scroll: el.dataset.section }); });
+  on(document.body, 'click', '.footer [data-section]', (e, el) => {
+    e.preventDefault();
+    navigate('/', { scroll: el.dataset.section });
+  });
 
   try {
     await init();
   } catch {
-    $('#view').innerHTML = '<div class="container page"><section class="card empty"><h3>Сервис временно недоступен</h3><p>Обновите страницу через минуту.</p></section></div>';
+    $('#view').innerHTML =
+      '<div class="container page"><section class="card empty"><h3>Сервис временно недоступен</h3><p>Обновите страницу через минуту.</p></section></div>';
     return;
   }
   startPolling(announce);
