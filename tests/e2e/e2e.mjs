@@ -28,10 +28,28 @@ async function test(name, fn) {
   } catch (e) {
     results.push({ name, ok: false, err: e.message });
     console.log(`  ✗ ${name}\n      ${e.message}`);
+    await diagnose(page, errors).catch((d) => console.log('      (диагностика не удалась: ' + d.message + ')'));
     await page.screenshot({ path: `e2e-fail-${results.length}.png`, fullPage: true }).catch(() => {});
   } finally {
     await ctx.close();
   }
+}
+
+// При падении печатаем, что было на самом деле: адрес, видимый статус, ошибки консоли и — если открыта
+// заявка — её статус и историю с сервера. Тогда упавший тест в CI объясняет себя без артефактов.
+async function diagnose(page, errors) {
+  if (errors.length) console.log('      консоль: ' + errors.join(' | ').slice(0, 400));
+  const url = page.url();
+  const shown = await page.evaluate(() => [...document.querySelectorAll('.decision h2, .todo-banner b, .pill, .tstep.active .tstep__t, .now-doing')]
+    .map((e) => e.textContent.trim()).filter(Boolean).slice(0, 6).join(' · ')).catch(() => '');
+  console.log(`      страница: ${url}${shown ? ' — ' + shown : ''}`);
+  const m = url.match(/#\/(?:app|apply)\/([0-9a-f]+)/);
+  if (!m) return;
+  const a = (await apiAs(page, 'GET', '/applications/' + m[1])).json;
+  if (!a) return;
+  const t = (x) => new Date(x).toISOString().slice(11, 23);
+  console.log(`      заявка ${a.number}: статус ${a.status}, сумма ${a.amount}, балл ${a.score ?? '—'}, сейчас ${t(Date.now())}`);
+  for (const h of (a.history || []).slice(-6)) console.log(`        ${t(h.at)} ${h.status} (${h.actor}) ${h.comment || ''}`.slice(0, 160));
 }
 
 async function login(page, phone) {
