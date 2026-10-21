@@ -1,6 +1,8 @@
 // Шапка: одна для всего сайта, два режима.
-//   site    — разделы продуктовой страницы, справа «Войти» или аватар;
+//   site    — разделы продуктовой страницы и «Услуги для бизнеса», справа «Войти» или аватар;
 //   cabinet — вкладки кабинета «Профиль · Заявки · Кредиты · Сообщения», справа «Новый кредит» и аватар.
+// «Услуги для бизнеса» — выпадающий список ссылок на alfabank.ru, как в меню сайта банка: открывается
+// наведением (и фокусом с клавиатуры), целиком на CSS. На телефоне тот же список — в меню-бургере.
 // Меню профиля открывается по клику и закрывается кликом мимо, Esc или переходом.
 import { esc, initials } from '../core/format.js';
 import { currentPath, navigate } from '../core/router.js';
@@ -10,6 +12,24 @@ import { copy, requisitesText, startApplication } from '../features/loan.js';
 import { icon, logoSign } from './icons.js';
 
 const SITE_LINKS = [['products', 'Кредиты'], ['calc', 'Калькулятор'], ['how', 'Как получить'], ['faq', 'Вопросы']];
+// Внешние ссылки на сайт Альфа-Банка — открываются в новой вкладке.
+const ALFA_SME = 'https://alfabank.ru/sme/';
+const SERVICE_GROUPS = [
+  ['Счёт и платежи', [
+    ['Расчётный счёт', 'https://alfabank.ru/sme/raschetnyj-schet/ip/bystro/'],
+    ['Эквайринг', 'https://alfabank.ru/sme/payservice/ehkavajring-dlya-ooo/'],
+    ['Платёжные ссылки', 'https://alfabank.ru/sme/payservice/internet-acquiring/servis-platezhnyh-ssylok/'],
+  ]],
+  ['Финансирование', [
+    ['Кредит для ООО', 'https://alfabank.ru/sme/profits/kredit-dlya-ooo/'],
+    ['Кредитная бизнес-карта', 'https://alfabank.ru/sme/profits/creditcard/'],
+  ]],
+  ['Сервисы', [
+    ['Селлерам маркетплейсов', 'https://alfabank.ru/sme/specialoffer/marketplace/'],
+    ['Документооборот (ЭДО)', 'https://alfabank.ru/sme/abp/services/contragents-docs/'],
+    ['Изменение данных ИП и ООО', 'https://alfabank.ru/sme/abp/services/svizm/'],
+  ]],
+];
 const CABINET_TABS = [['profile', '/cabinet', 'Профиль'], ['applications', '/cabinet/applications', 'Заявки'], ['credits', '/cabinet/credits', 'Кредиты'], ['messages', '/cabinet/messages', 'Сообщения']];
 
 let el = null;
@@ -27,8 +47,26 @@ function navHtml(m) {
     return CABINET_TABS.map(([key, href, label]) => `
       <a class="nav__link ${m.tab === key ? 'is-active' : ''}" href="#${href}" ${m.tab === key ? 'aria-current="page"' : ''}>${label}${key === 'messages' && m.unread ? `<span class="nav__badge">${m.unread}</span>` : ''}</a>`).join('');
   }
-  return SITE_LINKS.map(([id, label]) => `<a class="nav__link" href="#/" data-section="${id}">${label}</a>`).join('');
+  return `${SITE_LINKS.map(([id, label]) => `<a class="nav__link" href="#/" data-section="${id}">${label}</a>`).join('')}
+    <div class="nav__dd">
+      <button class="nav__link nav__more" type="button" aria-haspopup="true" aria-controls="services">Услуги для бизнеса ${icon('chev', 20)}</button>
+      ${servicesHtml()}
+    </div>`;
 }
+
+const external = (href) => `href="${href}" target="_blank" rel="noopener noreferrer"`;
+
+function servicesHtml() {
+  return `<div class="services" id="services">
+    <div class="services__cols">${SERVICE_GROUPS.map(([title, links]) => `
+      <div class="services__col"><span class="services__title">${title}</span>
+        ${links.map(([label, href]) => `<a class="services__link" ${external(href)}>${label}</a>`).join('')}
+      </div>`).join('')}
+    </div>
+    <a class="services__all" ${external(ALFA_SME)}>Все услуги для бизнеса ${icon('forward', 20)}</a>
+  </div>`;
+}
+
 
 function menuHtml(me) {
   return `
@@ -108,13 +146,14 @@ export function mountHeader(root) {
     if (action === 'new-loan') return startApplication('business-dev');
     if (action === 'copy-requisites') { setMenu(false); return copy(requisitesText(), 'Реквизиты скопированы'); }
     if (action === 'logout') { setMenu(false); await logout(); navigate('/'); return; }
-    if (e.target.closest('.menu a')) setMenu(false); // переход по пункту меню; клик по пустому месту меню его не закрывает
+    if (e.target.closest('.menu a')) setMenu(false);
+    if (e.target.closest('.services a')) { document.activeElement?.blur(); el.classList.remove('is-open'); } // переход по пункту меню; клик по пустому месту меню его не закрывает
   });
 
   document.addEventListener('click', (e) => {
     if (menuOpen && !e.target.closest('.menu-wrap')) setMenu(false);
     if (el.classList.contains('is-open') && !el.contains(e.target)) el.classList.remove('is-open');
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setMenu(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { setMenu(false); if (el.contains(document.activeElement)) document.activeElement.blur(); } });
   window.addEventListener('hashchange', () => { menuOpen = false; el.classList.remove('is-open'); });
 }

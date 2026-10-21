@@ -2,7 +2,7 @@
 
 /* ---------- шапка ---------- */
 .header { position: sticky; top: 0; z-index: 30; background: rgba(255, 255, 255, .96); border-bottom: 1px solid var(--line-soft); backdrop-filter: saturate(1.4) blur(8px); }
-.header__in { height: var(--header-h); display: flex; align-items: center; gap: 32px; }
+.header__in { position: relative; height: var(--header-h); display: flex; align-items: center; gap: 32px; }
 .logo { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
 .logo__sign { width: 18px; height: 24px; color: var(--brand); }
 .logo__text { display: grid; line-height: 1.15; }
@@ -18,6 +18,25 @@
 .header__burger { display: none; width: 44px; height: 44px; border-radius: var(--radius); place-items: center; color: var(--ink); }
 .header__burger:hover { background: var(--surface); }
 
+/* «Услуги для бизнеса»: список ссылок на alfabank.ru под шапкой, открывается наведением или фокусом.
+   Закрытие с задержкой 150 мс — курсор успевает перейти с пункта меню на панель. */
+.nav__dd { display: flex; }
+.nav__more { gap: 2px; }
+.nav__more .ic { transition: transform .2s; }
+.services { position: absolute; left: var(--gutter); right: var(--gutter); top: 100%; z-index: 35; padding: 28px 32px 20px;
+  background: #fff; border-radius: 0 0 var(--radius-xl) var(--radius-xl); box-shadow: 0 16px 32px rgba(31, 36, 38, .12); border: 1px solid var(--line-soft); border-top: 0;
+  opacity: 0; visibility: hidden; transform: translateY(-4px); transition: opacity .15s, transform .15s, visibility 0s linear .15s; }
+.nav__dd:hover .services, .nav__dd:focus-within .services { opacity: 1; visibility: visible; transform: none; transition-delay: .06s, .06s, 0s; }
+.nav__dd:hover .nav__more, .nav__dd:focus-within .nav__more { color: var(--ink); }
+.nav__dd:hover .nav__more .ic, .nav__dd:focus-within .nav__more .ic { transform: rotate(180deg); }
+.services__cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 40px; }
+.services__col { display: grid; gap: 4px; align-content: start; }
+.services__title { margin-bottom: 8px; font-size: var(--fs-s); color: var(--ink-3); }
+.services__link { padding: 6px 0; color: var(--ink); font-size: var(--fs-m); transition: color .15s; }
+.services__link:hover { color: var(--brand); }
+.services__all { display: inline-flex; align-items: center; gap: 2px; margin-top: 24px; color: var(--ink-2); font-weight: 500; font-size: 15px; }
+.services__all:hover { color: var(--ink); }
+
 /* мобильная навигация: разделы — второй строкой с прокруткой, без наложений на правую часть */
 @media (max-width: 960px) {
   .header__in { gap: 16px; }
@@ -27,6 +46,13 @@
   .header--site.is-open .nav { display: grid; left: 8px; right: 8px; top: calc(var(--header-h) + 4px); height: auto; padding: 8px; border: 0; border-radius: var(--radius-l); box-shadow: var(--shadow-pop); }
   .header--site.is-open .nav__link { padding: 12px; border-radius: var(--radius); }
   .header--site.is-open .nav__link:hover { background: var(--surface); }
+  .header--site .nav__more { display: none; }
+  .header--site.is-open .nav { max-height: calc(100dvh - var(--header-h) - 16px); overflow-y: auto; }
+  /* в меню-бургере список услуг показан сразу, без наведения */
+  .header--site .nav__dd { display: block; }
+  .header--site .services { position: static; opacity: 1; visibility: visible; transform: none; transition: none; margin-top: 8px; padding: 12px 12px 4px; border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; box-shadow: none; }
+  .services__cols { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .services__all { margin-top: 16px; }
   .header--site.is-open .nav__link.is-active::after { display: none; }
   .header--site .header__burger { display: grid; }
   .header--cabinet + .page { padding-top: calc(32px + 48px); }
@@ -69,6 +95,14 @@
 @media (max-width: 640px) {
   .menu { position: fixed; left: 8px; right: 8px; top: calc(var(--header-h) + 8px); width: auto; max-height: calc(100dvh - var(--header-h) - 16px); overflow-y: auto; }
 }
+
+/* ---------- плитка с иллюстрацией (кредиты на главной) — как плитки на alfabank.ru ---------- */
+.tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 24px 24px; text-align: center;
+  border-radius: var(--radius-xl); background: var(--surface); }
+.tile__title { font-size: var(--fs-h3); font-weight: 700; letter-spacing: -0.01em; line-height: 1.25; }
+.tile__text { color: var(--ink-2); font-size: 15px; }
+.tile .art { display: block; width: 100%; max-width: 220px; height: auto; margin: 6px auto 0; filter: drop-shadow(0 14px 16px rgba(31, 36, 38, .13)); transition: transform .3s cubic-bezier(.2, .8, .3, 1.2); }
+.tile:hover .art { transform: translateY(-4px) scale(1.03); }
 
 /* ---------- карточки, панели ---------- */
 .card { background: #fff; border: 1px solid var(--line-soft); border-radius: var(--radius-l); padding: 24px; }

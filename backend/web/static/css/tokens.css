@@ -67,6 +67,7 @@
   --radius-s: 8px;
   --radius: 12px;
   --radius-l: 20px;
+  --radius-xl: 32px; /* крупные блоки главной — как на alfabank.ru */
   --shadow: 0 1px 2px rgba(31, 36, 38, .05), 0 4px 14px rgba(31, 36, 38, .05);
   --shadow-pop: 0 12px 36px rgba(31, 36, 38, .16);
   --focus: 0 0 0 3px rgba(80, 87, 89, .28);

@@ -3,6 +3,7 @@ import { $, $$, on, storage } from '../core/dom.js';
 import { esc, fmt, months, rate, rub } from '../core/format.js';
 import { session, product } from '../core/session.js';
 import { accordion } from '../ui/accordion.js';
+import { productArt } from '../ui/art.js';
 import { icon } from '../ui/icons.js';
 import { calcFields, bindCalc, createQuoter, quoteRows } from '../features/calculator.js';
 import { startApplication } from '../features/loan.js';
@@ -13,6 +14,31 @@ const STEPS = [
   ['Получите решение', 'Через 10–20 секунд: одобрение, другие условия или понятное объяснение.'],
   ['Подпишите онлайн', 'Договор подписывается в кабинете, деньги приходят на расчётный счёт.'],
 ];
+
+const BENEFITS = [
+  ['bolt', 'Решение за 15 секунд', 'Банк проверяет компанию и считает нагрузку автоматически — ответ приходит, пока открыта страница.'],
+  ['doc', 'Без документов', 'Данные компании берём из ЕГРЮЛ, выручку — из налоговой. Не нужно ничего сканировать.'],
+  ['percent', 'Понятное решение', 'Показываем балл, плюсы и минусы заявки. При других условиях — сравнение с тем, что вы просили.'],
+  ['wallet', 'Всё в одном кабинете', 'Подписание, график и платежи — там же, где заявка. Деньги приходят на расчётный счёт.'],
+];
+
+/** Иллюстрация первого экрана: как выглядит результат в кабинете. Только для красоты, скрыта от экранных дикторов. */
+const heroArt = () => `
+  <div class="hero__art" aria-hidden="true">
+    <div class="art-card art-card--main">
+      <span class="art-card__label">Кредит одобрен</span>
+      <b>3 000 000 ₽</b>
+      <span class="foundation"></span>
+      <div class="art-card__rows"><span>Ставка</span><span>18,9%</span><span>Срок</span><span>24 месяца</span></div>
+    </div>
+    <div class="art-card art-card--pay">
+      <span class="art-card__ic">${icon('checkCircle', 24)}</span>
+      <div><small>Решение принято</small><b>за 15 секунд</b></div>
+    </div>
+    <div class="art-card art-card--sum">
+      <small>Платёж в месяц</small><b>151 080 ₽</b>
+    </div>
+  </div>`;
 
 const REQUIREMENTS = [
   'ИП или ООО, зарегистрированные в России',
@@ -43,27 +69,37 @@ export default async function landing(root, { signal, scroll }) {
   root.className = 'page page--landing';
   root.innerHTML = `
     <section class="hero">
-      <div class="container hero__in">
-        <div>
-          <p class="hero__crumbs">Малому бизнесу и ИП · Кредиты</p>
-          <h1>Кредит для бизнеса онлайн</h1>
-          <p class="hero__lead">Анкета за 3 минуты без визита в банк и документов. Решение за 15 секунд, деньги — сразу на расчётный счёт.</p>
-          <div class="facts">
-            <div><b>до ${fmt(maxAmount / 1e6)} млн ₽</b><span>сумма</span></div>
-            <div><b>от ${rate(minRate)}</b><span>ставка годовых</span></div>
-            <div><b>до ${Math.round(maxTerm / 12)} лет</b><span>срок</span></div>
-            <div><b>15 секунд</b><span>решение</span></div>
+      <div class="container">
+        <div class="hero__card">
+          <div class="hero__text">
+            <p class="hero__crumbs">Малому бизнесу и ИП · Кредиты</p>
+            <h1>Кредит для бизнеса онлайн</h1>
+            <p class="hero__lead">Анкета за 3 минуты без визита в банк и документов. Решение за 15 секунд, деньги — сразу на расчётный счёт.</p>
+            <div class="facts">
+              <div><b>до ${fmt(maxAmount / 1e6)} млн ₽</b><span>сумма</span></div>
+              <div><b>от ${rate(minRate)}</b><span>ставка годовых</span></div>
+              <div><b>до ${Math.round(maxTerm / 12)} лет</b><span>срок</span></div>
+            </div>
+            <div class="row row--wrap">
+              <button class="btn btn--primary" data-start="business-dev">Оформить онлайн</button>
+              <button class="btn btn--secondary" data-scroll="calc">Рассчитать платёж</button>
+            </div>
           </div>
-          <div class="row row--wrap">
-            <button class="btn btn--primary" data-start="business-dev">Оформить онлайн</button>
-            <button class="btn btn--ghost" data-scroll="how">Как получить</button>
-          </div>
+          ${heroArt()}
         </div>
-        <div class="calc" id="calc">
-          <div class="chips" role="radiogroup" aria-label="Кредит">${products.map((x) => `
-            <button class="chip ${x.id === p.id ? 'is-on' : ''}" data-calc-product="${x.id}" role="radio" aria-checked="${x.id === p.id}">${esc(x.name)}</button>`).join('')}
+      </div>
+    </section>
+
+    <section class="section" id="calc">
+      <div class="container">
+        <div class="section__head"><h2 class="title-f">Рассчитайте кредит</h2></div>
+        <div class="calc">
+          <div class="calc__form">
+            <div class="chips" role="radiogroup" aria-label="Кредит">${products.map((x) => `
+              <button class="chip ${x.id === p.id ? 'is-on' : ''}" data-calc-product="${x.id}" role="radio" aria-checked="${x.id === p.id}">${esc(x.name)}</button>`).join('')}
+            </div>
+            <div class="stack" id="calc-fields"></div>
           </div>
-          <div class="stack" id="calc-fields"></div>
           <div class="calc__result">
             <div class="calc__pay"><span>Платёж в месяц</span><b id="calc-pay">—</b></div>
             <div id="calc-rows"></div>
@@ -74,14 +110,23 @@ export default async function landing(root, { signal, scroll }) {
       </div>
     </section>
 
+    <section class="section" id="benefits">
+      <div class="container">
+        <div class="benefits">${BENEFITS.map(([ic, t, d]) => `
+          <div class="benefit"><span class="benefit__ic">${icon(ic, 24)}</span><h3>${t}</h3><p>${d}</p></div>`).join('')}
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="products">
       <div class="container">
         <div class="section__head"><h2 class="title-f">Выберите кредит</h2></div>
         <div class="products">${products.map((x) => `
-          <article class="product" data-product="${x.id}">
+          <article class="product tile" data-product="${x.id}">
             ${x.badge ? `<span class="product__badge">${esc(x.badge)}</span>` : ''}
-            <h3>${esc(x.name)}</h3>
-            <p>${esc(x.description)}</p>
+            <h3 class="tile__title">${esc(x.name)}</h3>
+            <p class="tile__text">${esc(x.description)}</p>
+            ${productArt(x.id)}
             <dl class="kv">
               <div><dt>Ставка</dt><dd>от ${rate(x.rate)}</dd></div>
               <div><dt>Сумма</dt><dd>до ${fmt(x.max_amount)} ₽</dd></div>
@@ -154,10 +199,10 @@ export default async function landing(root, { signal, scroll }) {
 
   // --- действия ---
   on(root, 'click', '[data-calc-product]', (_, el) => pick(el.dataset.calcProduct), signal);
-  on(root, 'click', '[data-calc-pick]', (_, el) => { pick(el.dataset.calcPick); $('#calc', root).scrollIntoView({ behavior: 'smooth', block: 'center' }); }, signal);
+  on(root, 'click', '[data-calc-pick]', (_, el) => { pick(el.dataset.calcPick); $('#calc', root).scrollIntoView({ behavior: 'smooth' }); }, signal);
   on(root, 'click', '[data-calc-apply]', () => startApplication(p.id, amount, term), signal);
   on(root, 'click', '[data-start]', (_, el) => startApplication(el.dataset.start), signal);
   on(root, 'click', '[data-scroll]', (_, el) => $(`#${el.dataset.scroll}`, root)?.scrollIntoView({ behavior: 'smooth' }), signal);
 
-  if (scroll) requestAnimationFrame(() => $(`#${scroll}`, root)?.scrollIntoView({ behavior: 'smooth', block: scroll === 'calc' ? 'center' : 'start' }));
+  if (scroll) requestAnimationFrame(() => $(`#${scroll}`, root)?.scrollIntoView({ behavior: 'smooth' }));
 }

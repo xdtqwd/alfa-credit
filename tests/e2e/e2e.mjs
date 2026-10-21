@@ -345,6 +345,29 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await page.waitForFunction(() => !document.querySelector('.header.is-open') && document.getElementById('faq').getBoundingClientRect().top < 300);
   });
 
+  await test('«Услуги для бизнеса»: список ссылок на alfabank.ru открывается наведением, в новой вкладке', async (page) => {
+    await page.goto(BASE + '/#/');
+    await page.waitForSelector('.hero h1');
+    assert(await page.locator('.topbar').count() === 0, 'полоски сегментов над шапкой быть не должно');
+    const panel = page.locator('#services');
+    assert(!(await panel.isVisible()), 'панель не должна быть видна без наведения');
+    await page.hover('.nav__more');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'visible');
+    assert(await page.locator('#services .art, #services img').count() === 0, 'в меню услуг не должно быть картинок — только список');
+    const links = await page.$$eval('#services a', (as) => as.map((a) => ({ href: a.href, target: a.target, rel: a.rel })));
+    assert(links.length >= 6, 'мало услуг в списке');
+    assert(links.every((l) => l.href.startsWith('https://alfabank.ru/') && l.target === '_blank' && l.rel.includes('noopener')), 'ссылки должны вести на alfabank.ru в новой вкладке: ' + JSON.stringify(links[0]));
+    await page.waitForTimeout(250); // дождались конца анимации появления
+    const hdr = await page.locator('.header').boundingBox();
+    const box = await panel.boundingBox();
+    assert(box.y >= hdr.y + hdr.height - 2 && box.height < 500, 'панель должна быть под шапкой и не закрывать экран');
+    await page.hover('#services .services__link'); // курсор переходит на панель — она не закрывается
+    await page.waitForTimeout(300);
+    assert(await panel.isVisible(), 'панель закрылась при переходе курсора на неё');
+    await page.mouse.move(720, 880); // увели курсор
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'hidden');
+  });
+
   await test('Овердрафт: срок фиксированный — без ползунка, платёж считается', async (page) => {
     await login(page, '79000000001');
     const a = (await apiAs(page, 'POST', '/applications', { product_id: 'overdraft' })).json;

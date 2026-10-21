@@ -1,20 +1,41 @@
 /* Страницы: главная, кабинет (профиль, заявки, кредиты, сообщения), анкета, заявка, кабинет банка. */
 
-/* ===== главная ===== */
-.hero { padding: 56px 0 64px; background: linear-gradient(180deg, var(--surface) 0%, #fff 100%); }
-.hero__in { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 56px; align-items: start; }
-.hero__in > :first-child { padding-top: 24px; }
+/* ===== главная =====
+   Мотивы страниц кредитов alfabank.ru: крупные скруглённые блоки на светло-сером, жирный заголовок,
+   цифры условий крупно, калькулятор — отдельным блоком с белой карточкой результата. */
+.page--landing { padding-top: 24px; }
+.hero__card { position: relative; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 32px; align-items: center;
+  padding: 56px; border-radius: var(--radius-xl); background: var(--surface); overflow: hidden; }
 .hero__crumbs { font-size: var(--fs-s); color: var(--ink-3); margin-bottom: 16px; }
-.hero h1 { max-width: 560px; }
+.hero h1 { max-width: 560px; font-size: 48px; line-height: 1.08; letter-spacing: -0.025em; }
 .hero__lead { margin-top: 20px; font-size: var(--fs-l); color: var(--ink-2); max-width: 520px; }
-.facts { display: grid; grid-template-columns: repeat(4, auto); gap: 32px; justify-content: start; margin: 32px 0 36px; }
-.facts b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+.facts { display: grid; grid-template-columns: repeat(3, auto); gap: 40px; justify-content: start; margin: 32px 0 36px; }
+.facts b { display: block; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
 .facts span { font-size: var(--fs-s); color: var(--ink-3); }
+
+/* иллюстрация: карточки результата из кабинета */
+.hero__art { position: relative; height: 340px; }
+.art-card { position: absolute; background: #fff; border-radius: var(--radius-l); box-shadow: 0 18px 40px rgba(31, 36, 38, .10); }
+.art-card small, .art-card__label { display: block; font-size: 13px; color: var(--ink-3); }
+.art-card b { display: block; font-weight: 700; letter-spacing: -0.02em; }
+.art-card--main { left: 8%; top: 24px; width: 300px; padding: 24px; display: grid; gap: 8px; transform: rotate(-3deg); }
+.art-card--main b { font-size: 32px; }
+.art-card__rows { display: grid; grid-template-columns: auto auto; justify-content: space-between; gap: 6px 24px; margin-top: 12px; font-size: 14px; color: var(--ink-2); }
+.art-card__rows span:nth-child(even) { text-align: right; color: var(--ink); font-weight: 500; }
+.art-card--pay { right: 0; top: 8px; display: flex; gap: 12px; align-items: center; padding: 14px 18px; }
+.art-card__ic { color: var(--ok); display: grid; }
+.art-card--pay b { font-size: 17px; }
+.art-card--sum { right: 6%; bottom: 16px; padding: 18px 22px; background: var(--ink); }
+.art-card--sum small { color: rgba(255, 255, 255, .65); }
+.art-card--sum b { color: #fff; font-size: 24px; }
 @media (max-width: 960px) {
-  .hero { padding: 32px 0 40px; }
-  .hero__in { grid-template-columns: minmax(0, 1fr); gap: 32px; }
-  .facts { grid-template-columns: repeat(2, auto); gap: 20px 32px; }
+  .hero__card { grid-template-columns: minmax(0, 1fr); padding: 32px 24px; }
+  .hero__art { display: none; }
+  .hero h1 { font-size: var(--fs-h1); }
+  .facts { gap: 24px; }
+  .facts b { font-size: 20px; }
 }
+@media (max-width: 480px) { .facts { grid-template-columns: repeat(2, auto); } }
 
 .section { padding: 64px 0 0; }
 .section__head { margin-bottom: 28px; }
@@ -22,10 +43,9 @@
 @media (max-width: 720px) { .section { padding-top: 48px; } }
 
 .products { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-.product { display: flex; flex-direction: column; gap: 16px; padding: 24px; border-radius: var(--radius-l); background: var(--surface); }
-.product__badge { align-self: flex-start; padding: 2px 10px; border-radius: 10px; background: #fff; color: var(--brand); font-size: 12px; font-weight: 600; }
-.product h3 { font-size: var(--fs-l); }
-.product p { color: var(--ink-2); font-size: 15px; }
+.product { padding-top: 40px; }
+.product .kv, .product__actions { align-self: stretch; text-align: left; }
+.product__badge { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: 2px 10px; border-radius: 10px; background: #fff; color: var(--brand); font-size: 12px; font-weight: 600; }
 .product .kv { margin-top: auto; padding-top: 8px; }
 .product__actions { display: flex; gap: 8px; }
 .product__actions .btn { flex: 1; padding: 0 12px; }
@@ -43,18 +63,36 @@
 .checklist li { display: flex; gap: 12px; align-items: flex-start; color: var(--ink-2); }
 .checklist .ic { color: var(--ok); margin-top: 1px; }
 
-/* ===== калькулятор ===== */
-.calc { display: grid; gap: 20px; padding: 28px; background: #fff; border-radius: var(--radius-l); box-shadow: var(--shadow); border: 1px solid var(--line-soft); }
+/* ===== калькулятор =====
+   Блок на светло-сером: слева продукт, сумма и срок, справа белая карточка с платежом. */
+.calc { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 24px; padding: 32px; border-radius: var(--radius-xl); background: var(--surface); }
+.calc__form { display: grid; gap: 24px; align-content: start; }
+.calc .chip:not(.is-on) { background: #fff; }
+.calc .input:not(:focus) { border-color: transparent; }
 .calc__field { display: grid; gap: 8px; }
 .calc__label { display: flex; justify-content: space-between; gap: 12px; font-size: var(--fs-s); color: var(--ink-2); }
 .calc__label span:last-child { color: var(--ink-3); }
 .calc__note { font-size: 13px; color: var(--ink-3); }
-.calc__result { display: grid; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
-.calc__pay { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.calc__result { display: grid; gap: 16px; align-content: start; padding: 28px; border-radius: var(--radius-l); background: #fff; }
+.calc__pay { display: grid; gap: 4px; }
 .calc__pay span { color: var(--ink-2); }
-.calc__pay b { font-size: 30px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; transition: opacity .15s; }
+.calc__pay b { font-size: 36px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; transition: opacity .15s; }
 .calc__pay b.is-stale { opacity: .45; }
-@media (max-width: 640px) { .calc { padding: 20px; } .calc__pay b { font-size: 26px; } }
+@media (max-width: 960px) { .calc { grid-template-columns: minmax(0, 1fr); padding: 20px; } }
+@media (max-width: 640px) { .calc__result { padding: 20px; } .calc__pay b { font-size: 28px; } }
+
+/* сводка в анкете — та же разметка платежа, но в строку */
+.form-aside .calc__pay { display: flex; align-items: baseline; justify-content: space-between; }
+.form-aside .calc__pay b { font-size: 30px; }
+
+/* преимущества */
+.benefits { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.benefit { display: grid; gap: 10px; align-content: start; padding: 24px; border-radius: var(--radius-l); background: var(--surface); }
+.benefit__ic { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; background: #fff; color: var(--brand); margin-bottom: 6px; }
+.benefit h3 { font-size: var(--fs-l); }
+.benefit p { color: var(--ink-2); font-size: 15px; }
+@media (max-width: 1080px) { .benefits { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .benefits { grid-template-columns: minmax(0, 1fr); } }
 
 /* ===== кабинет ===== */
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
