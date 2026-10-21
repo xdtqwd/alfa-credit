@@ -35,24 +35,24 @@ async function caption(page, text, ms = 2200) {
 }
 
 async function login(page, phone) {
-  await page.click('#auth-slot [data-do=login]');
-  await page.waitForSelector('#a-phone');
-  await page.type('#a-phone', phone, { delay: 40 });
-  await page.type('#a-pass', 'demo1234', { delay: 40 });
+  await page.click('[data-header=login]');
+  await page.waitForSelector('#auth-phone');
+  await page.type('#auth-phone', phone, { delay: 40 });
+  await page.type('#auth-password', 'demo1234', { delay: 40 });
   await page.click('#auth-form button[type=submit]');
-  await page.waitForSelector('#auth-slot .ahdr__user');
+  await page.waitForSelector('#requisites');
 }
 
 async function fillAndSubmit(page) {
-  await page.waitForSelector('#rev');
+  await page.waitForSelector('#f-revenue');
   await caption(page, 'Анкета уже заполнена из профиля и ЕГРЮЛ — осталось подставить выручку из ФНС и дать согласие');
-  await page.click('[data-act=use-fns]');
+  await page.click('[data-use-fns]');
   await sleep(600);
-  await page.check('#consent');
-  await page.waitForFunction(() => document.querySelector('#s-saved')?.textContent === 'Сохранено', null, { timeout: 8000 });
+  await page.check('#f-consent');
+  await page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout: 8000 });
   await caption(page, 'Отправляем — без отдельного шага «оставить заявку»', 1400);
   await page.click('#submit');
-  await page.waitForSelector('.tracker');
+  await page.waitForSelector('.stepper');
 }
 
 (async () => {
@@ -64,10 +64,10 @@ async function fillAndSubmit(page) {
   const t0 = Date.now();
   try {
     // 1. Гость: продуктовая страница и калькулятор
-    await page.goto(BASE + '/#/products');
-    await page.waitForSelector('.a-hero h1');
+    await page.goto(BASE + '/#/');
+    await page.waitForSelector('.hero h1');
     await caption(page, 'Умный кредитный кабинет предпринимателя · Альфа Хак 2026', 2500);
-    await page.click('.ahdr__nav [data-do=calc]');
+    await page.click('.nav [data-section=calc]');
     await sleep(900);
     await caption(page, 'Калькулятор: платёж считает сервер (Go) — единый источник расчёта');
     const range = page.locator('#calc [data-calc=amount]');
@@ -82,10 +82,10 @@ async function fillAndSubmit(page) {
 
     // 2. Оформить без входа нельзя → вход → сразу анкета
     await caption(page, 'Оформить без входа нельзя: вход по телефону, и сразу открывается анкета', 1500);
-    await page.click('#calc [data-act=calc-apply]');
-    await page.waitForSelector('#a-phone');
-    await page.type('#a-phone', '79000000001', { delay: 40 });
-    await page.type('#a-pass', 'demo1234', { delay: 40 });
+    await page.click('#calc [data-calc-apply]');
+    await page.waitForSelector('#auth-phone');
+    await page.type('#auth-phone', '79000000001', { delay: 40 });
+    await page.type('#auth-password', 'demo1234', { delay: 40 });
     await page.click('#auth-form button[type=submit]');
     await fillAndSubmit(page);
 
@@ -93,46 +93,46 @@ async function fillAndSubmit(page) {
     await caption(page, 'Банк обрабатывает заявку: проверка данных (ЕГРЮЛ, ФНС, БКИ) → оценка риска → решение', 1200);
     const appUrl = page.url();
     await page.goto(BASE + '/#/bank');
-    await page.waitForSelector('table.bank');
+    await page.waitForSelector('#bank-table table');
     await caption(page, 'Кабинет сотрудника банка: заявка идёт по конвейеру — события через Kafka, данные в PostgreSQL', 0);
-    await page.waitForFunction(() => /Одобрено|Контрпредложение|Отказ|Уточнение/.test(document.querySelector('table.bank tbody tr')?.textContent || ''), null, { timeout: 30000 });
+    await page.waitForFunction(() => /Одобрено|Контрпредложение|Отказ|Уточнение/.test(document.querySelector('#bank-table tbody tr')?.textContent || ''), null, { timeout: 30000 });
     await caption(page, 'Скоринг принял решение: балл, условия и причина видны банку', 3000);
 
     // 4. Клиент видит результат, подписывает, получает деньги и платит
     await page.goto(appUrl);
-    await page.waitForSelector('.decision--green', { timeout: 30000 });
+    await page.waitForSelector('#decision.decision--ok', { timeout: 30000 });
     await caption(page, 'Клиент сразу видит решение и что от него нужно — простыми словами', 3000);
-    await page.click('.todo-banner [data-act=accept]');
+    await page.click('#todo [data-action=accept]');
     await page.waitForSelector('#sign-ok');
     await caption(page, 'Подписание простой электронной подписью прямо в кабинете', 1600);
     await page.check('#sign-ok');
     await page.click('#sign-btn');
-    await page.waitForSelector('.schedule');
+    await page.waitForSelector('table.schedule');
     await caption(page, 'Деньги зачислены на расчётный счёт, график платежей построен', 3000);
-    await page.click('.todo-banner [data-act=pay]');
+    await page.click('#todo [data-action=pay]');
     await page.waitForSelector('#pay-ok');
     await sleep(800);
     await page.click('#pay-ok');
-    await page.waitForFunction(() => /Оплачено 1 из/.test(document.querySelector('.pay-row')?.textContent || ''), null, { timeout: 10000 });
+    await page.waitForFunction(() => /Оплачено 1 из/.test(document.querySelector('#pay-line')?.textContent || ''), null, { timeout: 10000 });
     await caption(page, 'Первый платёж списан со счёта строго по графику', 2500);
 
     // 5. Личный кабинет
-    await page.goto(BASE + '/#/credits');
-    await page.waitForSelector('.mx-title');
-    await caption(page, 'Минималистичный личный кабинет: заявки, кредиты, сообщения', 3000);
-    await page.click('#auth-slot .ahdr__user');
-    await page.waitForSelector('.dd[data-dd="me"].open');
+    await page.goto(BASE + '/#/cabinet/credits');
+    await page.waitForSelector('.loan');
+    await caption(page, 'Личный кабинет: профиль и реквизиты, заявки, кредиты, сообщения', 3000);
+    await page.click('[data-header=menu]');
+    await page.waitForSelector('.menu');
     await caption(page, 'Профиль компании, реквизиты, выход', 2200);
-    await page.click('[data-do=logout]');
-    await page.waitForSelector('#auth-slot [data-do=login]');
+    await page.click('[data-header=logout]');
+    await page.waitForSelector('[data-header=login]');
 
     // 6. Отказ с понятным объяснением
     await caption(page, 'Другой сценарий: у компании просрочки в БКИ', 1800);
     await login(page, '79000000003');
-    await page.click('.mx-new [data-do=apply]');
+    await page.click('[data-header=new-loan]');
     await fillAndSubmit(page);
-    await page.waitForSelector('.decision--red', { timeout: 30000 });
-    await page.locator('.decision').scrollIntoViewIfNeeded();
+    await page.waitForSelector('#decision.decision--bad', { timeout: 30000 });
+    await page.locator('#decision').scrollIntoViewIfNeeded();
     await caption(page, 'Отказ не «чёрный ящик»: причина на данных анкеты и что можно сделать', 4500);
     await caption(page, 'Без платных API и подписок · PostgreSQL + Kafka в одном docker compose · обычный ПК', 3000);
     await caption(page, '', 0);

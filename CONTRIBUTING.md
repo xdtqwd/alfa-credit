@@ -40,7 +40,7 @@ git switch main && git pull && git branch -d feature/short-name
 | Задача | Что внутри |
 |---|---|
 | **Go** | `go mod verify`, `gofmt`, `go vet`, все тесты с race-детектором на настоящих PostgreSQL 16 и Kafka, гонки при оплате и идемпотентности ×20 |
-| **Полный стек** | `docker compose up --build` (api, worker, PostgreSQL, Kafka), 22 браузерных e2e, сквозная самопроверка `/selfcheck`, отказ Kafka и восстановление без потери заявок |
+| **Полный стек** | `docker compose up --build` (api, worker, PostgreSQL, Kafka), 24 браузерных e2e, сквозная самопроверка `/selfcheck`, отказ Kafka и восстановление без потери заявок |
 
 При падении в артефактах сборки лежат логи всех контейнеров и скриншоты упавших e2e.
 

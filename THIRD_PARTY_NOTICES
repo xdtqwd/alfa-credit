@@ -3,7 +3,7 @@ THIRD PARTY NOTICES — alfa-credit
 Runtime-зависимости
 -------------------
 Сервис написан на стандартной библиотеке Go плюс два драйвера (версии зафиксированы в go.mod/go.sum).
-Фронтенд — vanilla HTML/CSS/JS, без npm-пакетов и CDN; используются системные шрифты.
+Фронтенд — vanilla HTML/CSS/JS (ES-модули), без npm-пакетов, сборки и CDN; шрифт и иконки лежат в поставке.
 
 - Go toolchain 1.24 — BSD-3-Clause — https://go.dev/LICENSE
 - github.com/lib/pq v1.10.9 — MIT — https://github.com/lib/pq — драйвер PostgreSQL
@@ -19,16 +19,21 @@ Runtime-зависимости
 - apache/kafka:3.8.1 — Apache-2.0 — https://kafka.apache.org (режим KRaft, без ZooKeeper)
 - provectuslabs/kafka-ui:v0.7.2 — Apache-2.0 — https://github.com/provectus/kafka-ui (только профиль tools, по желанию)
 
-Иконки (включены в поставку)
----------------------------
+Шрифт, иконки и знак (включены в поставку)
+------------------------------------------
+- Inter (variable, начертания 400–700) — SIL Open Font License 1.1 — https://github.com/rsms/inter
+  Замена фирменного шрифта Styrene из брендбука. В web/static/fonts/ — подмножества woff2
+  (кириллица, латиница, latin-ext для знака ₽), подключаются через @font-face с unicode-range.
 - @alfalab/icons-glyph 2.293.0 — MIT — https://github.com/core-ds/icons
-  Иконки дизайн-системы Альфа-Банка (Core Components), размер M 24×24. В web/static/icons.js
-  скопированы только SVG-пути 27 используемых иконок (Add, Calculator, Bank, Document, User, Wallet и др.).
+  Иконки дизайн-системы Альфа-Банка (Core Components), размер M 24×24. В web/static/js/ui/icons.js
+  скопированы только SVG-пути используемых иконок (Add, Calculator, Bank, Document, User, Wallet и др.).
+- @alfalab/icons-logo 1.63.0 — MIT — https://github.com/core-ds/icons
+  Знак «А» (AlfaBankSignMIcon) — логотип в шапке и иконка вкладки.
 
 Ориентиры дизайна (код не включён)
 ----------------------------------
 - Core Components Альфа-Банка (@alfalab/core-components, MIT) — https://github.com/core-ds/core-components
-  Аккордеон (web/static/score.js) повторяет поведение @alfalab/core-components-accordion:
+  Аккордеон (web/static/js/ui/accordion.js) повторяет поведение @alfalab/core-components-accordion:
   заголовок + шеврон справа, анимация высоты 400 мс с теми же кривыми, отступ контента 12 px.
   Реализация своя, на vanilla JS, без React и без кода библиотеки.
 
@@ -54,4 +59,6 @@ Runtime-зависимости
 
 Бренд
 -----
-Цветовая палитра отсылает к Альфа-Банку — партнёру хакатона. Логотипы банка не используются.
+Альфа-Банк — партнёр хакатона. Палитра (красный #EF3124, Pantone 445 и Cool Grey 1), элемент
+«фундамент» и знак «А» взяты из открытого брендбука и пакета @alfalab/icons-logo; прототип
+не выдаёт себя за сервис банка — в подвале указано, что это демо хакатона на синтетических данных.
