@@ -39,8 +39,11 @@ type Server struct {
 	Idem           idempotency.Store // nil — Idempotency-Key игнорируется
 	Limiter        *RateLimiter      // nil — без лимита
 	RequestTimeout time.Duration
-	// Ready — дополнительные проверки готовности (Kafka и т.п.) для /readyz.
+	// Ready — обязательные проверки готовности для /readyz: при отказе — 503, экземпляр снимается с трафика.
 	Ready map[string]func(ctx context.Context) error
+	// Degradable — проверки зависимостей, без которых API продолжает работать (Kafka: события копятся
+	// в outbox). Их отказ даёт 200 «degraded», а не 503 — иначе балансировщик снял бы API из-за шины.
+	Degradable map[string]func(ctx context.Context) error
 	// Platform — сведения об инфраструктуре для кабинета банка (хранилище, шина, outbox).
 	Platform func(ctx context.Context) map[string]any
 	// AuditLog — журнал аудита по заявке (есть в PostgreSQL-режиме).
@@ -140,9 +143,16 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	for name, fn := range s.Ready {
 		run(name, fn)
 	}
+	critical := ok
+	for name, fn := range s.Degradable {
+		run(name, fn)
+	}
 	code, status := 200, "ready"
-	if !ok {
+	switch {
+	case !critical:
 		code, status = 503, "not ready"
+	case !ok:
+		status = "degraded"
 	}
 	writeJSON(w, code, map[string]any{"status": status, "checks": checks})
 }

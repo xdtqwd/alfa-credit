@@ -1,0 +1,103 @@
+# CI: каждая фича-ветка проходит те же проверки, что и main, до слияния.
+#   go     — vet + тесты с race-детектором на настоящих PostgreSQL 16 и Kafka (KRaft)
+#   stack  — docker compose целиком: браузерные e2e, сквозная самопроверка, отказ и восстановление Kafka
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go — тесты на PostgreSQL и Kafka
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: credit
+          POSTGRES_PASSWORD: credit
+          POSTGRES_DB: credit
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U credit -d credit"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+      kafka:
+        # без настроек образ поднимает один узел KRaft на localhost:9092
+        image: apache/kafka:3.8.1
+        ports: ["9092:9092"]
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          --health-interval 5s --health-timeout 10s --health-retries 30 --health-start-period 15s
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      TEST_DATABASE_URL: postgres://credit:credit@localhost:5432/credit?sslmode=disable
+      TEST_KAFKA_BROKERS: localhost:9092
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Зависимости совпадают с go.sum
+        run: go mod verify
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go vet
+        run: go vet ./...
+      - name: Тесты (race, покрытие; PostgreSQL и Kafka — настоящие)
+        run: |
+          go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./internal/...
+          go tool cover -func=coverage.out | tail -1
+      - name: Гонки при оплате, подписании и идемпотентности (×20)
+        run: go test -race -count=20 -run 'Concurrent|Payments|Idempotency|Singleflight|Order' ./internal/httpapi/ ./internal/storage/... ./internal/cache/ ./internal/events/...
+
+  stack:
+    name: Полный стек — e2e, самопроверка, отказ Kafka
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PIPELINE_STEP_DELAY: 1s
+      RATE_LIMIT_RPS: "1000"
+      RATE_LIMIT_BURST: "2000"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сборка и запуск (api, worker, PostgreSQL, Kafka)
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Playwright
+        run: |
+          npm i --no-save playwright@1.56.0
+          npx playwright install --with-deps chromium
+      - name: Браузерные e2e
+        run: BASE_URL=http://localhost:8080 node tests/e2e/e2e.mjs
+      - name: Сквозная самопроверка и отказ Kafka
+        run: ./scripts/check.sh --chaos
+      - name: Логи и скриншоты при ошибке
+        if: failure()
+        run: docker compose logs --no-color > compose.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: diagnostics
+          path: |
+            compose.log
+            e2e-fail-*.png
+          if-no-files-found: ignore
+      - name: Остановка
+        if: always()
+        run: docker compose down -v

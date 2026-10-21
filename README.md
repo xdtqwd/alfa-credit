@@ -5,6 +5,7 @@
 **Кредит для малого бизнеса онлайн: от расчёта платежа до денег на счёте — за несколько минут, в одном кабинете.**<br>
 Клиент подаёт заявку, банковский конвейер проверяет данные и принимает решение, обе стороны видят процесс в реальном времени.
 
+[![CI](https://github.com/xdtqwd/alfa-credit/actions/workflows/ci.yml/badge.svg)](https://github.com/xdtqwd/alfa-credit/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 ![Kafka](https://img.shields.io/badge/Apache_Kafka-outbox-231F20?logo=apachekafka&logoColor=white)
@@ -16,7 +17,7 @@
 
 **Альфа Хак 2026 · кейс «Умный кредитный кабинет предпринимателя»**
 
-[Быстрый старт](#-быстрый-старт) · [Демо](#-демонстрация) · [Как это работает](#-как-это-работает) · [Платформа](#-платформа-postgresql--kafka) · [Скриншоты](#-скриншоты) · [Архитектура](docs/ARCHITECTURE.md) · [API](docs/openapi.yaml) · [Тесты](#-тестирование)
+[Быстрый старт](#-быстрый-старт) · [Проверка](#-как-проверить-что-всё-работает) · [Демо](#-демонстрация) · [Как это работает](#-как-это-работает) · [Платформа](#-платформа-postgresql--kafka) · [Скриншоты](#-скриншоты) · [Архитектура](docs/ARCHITECTURE.md) · [API](docs/openapi.yaml) · [Тесты](#-тестирование)
 
 <img src="docs/demo.gif" alt="Демо: заявка клиента проходит конвейер банка и получает решение" width="800">
 
@@ -70,6 +71,58 @@ Docker: `make up`, `make down`, `make logs`.
 
 Health: `GET /healthz` (жив), `GET /readyz` (PostgreSQL и Kafka доступны, с причиной отказа). Метрики: `GET :9090/metrics`.
 </details>
+
+## ✅ Как проверить, что всё работает
+
+После `docker compose up -d --build` одна команда проходит весь кредитный процесс через API и проверяет платформу:
+
+```bash
+./scripts/check.sh            # ~10 с
+./scripts/check.sh --chaos    # + остановка Kafka: заявки принимаются, после восстановления доходят до решения
+```
+
+<details>
+<summary><b>Что проверяется и пример вывода</b></summary>
+
+Внутри — программа `/selfcheck`, она уже лежит в образе (Go, Node и curl на машине не нужны). Её можно запустить и вручную: `docker compose exec api /selfcheck`.
+
+```
+Инфраструктура
+  ✓ /readyz — готов: kafka=ok, storage=ok
+  ✓ платформа: хранилище postgres, шина kafka, в outbox ждут 0
+Клиент: от калькулятора до решения
+  ✓ заявка создана: КР-000001 (сразу анкета, без «оставить заявку»)
+  ✓ повтор с тем же Idempotency-Key вернул ту же заявку, дубль не создан
+  ✓ заявка подана за 4 мс — ответ не ждёт конвейер
+  ✓ решение конвейера через 3.5 с: approved, балл 790
+  ✓ опрос статуса: пока ничего не изменилось, сервер отвечает 304 без тела (ETag)
+  ✓ решение принял отдельный воркер по событию из Kafka (outbox → топик → consumer group)
+Подписание, выдача, оплата
+  ✓ на счёт зачислено ровно 3000000 ₽
+  ✓ платёж 151080 ₽ списан один раз, хотя запрос отправлен дважды (как при обрыве сети)
+Сторона банка
+  ✓ журнал аудита: application.create, application.submit, application.accept, loan.sign_and_disburse, loan.pay
+Поведение API
+  ✓ неизвестный путь → JSON 404 с request_id
+  ✓ метрики размечены шаблоном маршрута
+Итог: пройдено 29, ошибок 0
+```
+
+С `--chaos`: при остановленной Kafka заявка принимается, `/readyz` отвечает `200 degraded` (балансировщик не снимает API), события ждут в outbox; после `docker compose start kafka` заявка доходит до решения — событие не теряется.
+
+Посмотреть руками:
+
+| Что | Где |
+|---|---|
+| Сообщения в Kafka | `docker compose --profile tools up -d` → http://localhost:8081 (Kafka UI): топики `credit.applications.v1` и `…dlq.v1` |
+| Таблицы PostgreSQL | `docker compose exec postgres psql -U credit -c "select number, status from applications"` |
+| Outbox и аудит | `… -c "select count(*) filter (where published_at is null) from outbox"`, `… -c "select action, actor, at from audit_log order by id desc limit 10"` |
+| Логи с корреляцией | `docker compose logs -f api worker` — у HTTP-запроса и шагов конвейера общий `rid` |
+| Метрики | http://localhost:9090/metrics |
+| Состояние платформы | «Кабинет сотрудника банка» → строка с хранилищем, шиной, outbox и кэшем |
+</details>
+
+Каждый pull request прогоняет то же самое в [CI](.github/workflows/ci.yml): тесты на настоящих PostgreSQL и Kafka, весь стек в docker compose, 22 браузерных e2e, самопроверку и отказ Kafka. Как вести ветки — в [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## 🔁 Как это работает
 

@@ -8,12 +8,15 @@ RUN go mod download && go mod verify
 COPY . .
 RUN go test ./... \
  && go build -ldflags="-s -w" -o /out/api ./cmd/api \
+ && go build -ldflags="-s -w" -o /out/selfcheck ./cmd/selfcheck \
  && mkdir -p /out/data
 
 # ---------- runtime ----------
 # distroless: нет shell и пакетного менеджера → минимальная поверхность атаки
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/api /api
+# сквозная самопроверка стека: docker compose exec api /selfcheck
+COPY --from=build /out/selfcheck /selfcheck
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV HTTP_ADDR=:8080 \
     DATA_FILE=/data/applications.json \
