@@ -228,11 +228,8 @@
   background: #fff;
 }
 .header--platinum .services {
-  background-color: var(--platinum);
-  background-image: linear-gradient(160deg, rgba(255, 255, 255, 0) 10%, rgba(255, 255, 255, 0.6) 45%, rgba(255, 255, 255, 0) 75%);
-  box-shadow:
-    0 32px 48px rgba(31, 36, 38, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  background: var(--platinum); /* один ровный цвет, без отливов */
+  box-shadow: 0 32px 48px rgba(31, 36, 38, 0.16);
 }
 .header--platinum .services__side {
   border-right-color: var(--platinum-line);

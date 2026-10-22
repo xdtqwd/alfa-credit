@@ -121,12 +121,13 @@ jobs:
           node-version: 22
       - name: Playwright
         run: |
-          npm i --no-save playwright@1.56.0
+          cd tests/e2e
+          npm ci
           npx playwright install --with-deps chromium
       - name: Браузерные e2e
-        run: BASE_URL=http://localhost:8080 node tests/e2e/e2e.mjs
+        run: BASE_URL=http://localhost:8080 node tests/e2e/e2e.mjs # playwright из tests/e2e/node_modules
       - name: Сквозная самопроверка и отказ Kafka
-        run: ./scripts/check.sh --chaos
+        run: bash scripts/check.sh --chaos
       - name: Логи и скриншоты при ошибке
         if: failure()
         run: |

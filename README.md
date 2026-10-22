@@ -66,7 +66,9 @@ Docker: `make up`, `make down`, `make logs`.
 | `REQUEST_TIMEOUT` | `10s` | предел времени запроса к API |
 | `CACHE_REGISTRY_TTL` / `CACHE_BUREAU_TTL` | `1h` / `10m` | кэш ответов ЕГРЮЛ/ФНС и БКИ |
 | `LOG_LEVEL` / `LOG_FORMAT` | `info` / `json` | логи (`text` — для отладки) |
-| `BANK_TOKEN` | `demo-bank` | токен кабинета банка (`X-Bank-Token`) |
+| `APP_MODE` | `production` (в compose и `make run` — `demo`) | `production`: `BANK_TOKEN` обязателен (от 16 символов, не `demo-bank`), cookie сессии только по HTTPS; иначе сервис не стартует. `demo`: публичный токен и cookie без `Secure` для `http://localhost` |
+| `BANK_TOKEN` | — (в демо `demo-bank`) | токен кабинета банка (`X-Bank-Token`) |
+| `COOKIE_SECURE` | `true` в production, `false` в демо | флаг `Secure` у cookie сессии |
 | `POSTGRES_PASSWORD` | `credit-local` | пароль БД в compose |
 
 Health: `GET /healthz` (жив), `GET /readyz` (PostgreSQL и Kafka доступны, с причиной отказа). Метрики: `GET :9090/metrics`.
@@ -77,8 +79,8 @@ Health: `GET /healthz` (жив), `GET /readyz` (PostgreSQL и Kafka доступ
 После `docker compose up -d --build` одна команда проходит весь кредитный процесс через API и проверяет платформу:
 
 ```bash
-./scripts/check.sh            # ~10 с
-./scripts/check.sh --chaos    # + остановка Kafka: заявки принимаются, после восстановления доходят до решения
+bash scripts/check.sh         # ~10 с
+bash scripts/check.sh --chaos # + остановка Kafka: заявки принимаются, после восстановления доходят до решения
 ```
 
 <details>
@@ -209,7 +211,7 @@ flowchart LR
 
 ```bash
 docker run --rm --network host -v "$PWD":/w -w /w mcr.microsoft.com/playwright:v1.56.0-noble \
-  sh -c "npm i --no-save playwright@1.56.0 >/dev/null && BASE_URL=http://localhost:8080 node tests/e2e/demo.mjs"
+  sh -c "cd tests/e2e && npm ci >/dev/null && BASE_URL=http://localhost:8080 node demo.mjs"
 # скриншоты: тот же запуск с tests/e2e/screens.mjs (на чистых данных)
 ```
 
@@ -292,7 +294,7 @@ tests/e2e/               браузерные тесты, запись демо-
 ## 🧪 Тестирование
 
 ```bash
-./scripts/test-all.sh        # vet → тесты с race-детектором и покрытием → гонки ×20 → e2e в браузере
+bash scripts/test-all.sh     # vet → тесты с race-детектором и покрытием → гонки ×20 → e2e в браузере
 cd backend && go test ./...  # только Go, без внешних зависимостей
 make test-integration        # + интеграционные тесты на PostgreSQL и Kafka из docker compose (Go ставить не нужно)
 cd tests/lint && npm ci && npm run lint   # фронтенд: ESLint, Prettier, CSS-переменные, юнит-тесты
@@ -320,7 +322,7 @@ E2E без Node — в образе Playwright (сервер запущен на
 
 ```bash
 docker run --rm --network host -v "$PWD":/w -w /w mcr.microsoft.com/playwright:v1.56.0-noble \
-  sh -c "npm i --no-save playwright@1.56.0 >/dev/null && BASE_URL=http://localhost:8080 node tests/e2e/e2e.mjs"
+  sh -c "cd tests/e2e && npm ci >/dev/null && BASE_URL=http://localhost:8080 node e2e.mjs"
 ```
 
 Покрытие Go-кода — 83% (с интеграционными тестами; без них — около 70%).

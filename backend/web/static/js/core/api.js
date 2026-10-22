@@ -54,7 +54,8 @@ export async function api(method, path, body, headers = {}) {
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const e = data?.error || {};
-    if (res.status === 401 && !path.startsWith('/auth/')) onUnauthorized();
+    // 401 по токену кабинета банка — не про сессию клиента, выходить из кабинета не нужно
+    if (res.status === 401 && !path.startsWith('/auth/') && !hdrs['X-Bank-Token']) onUnauthorized();
     throw new ApiError(e.message || res.statusText, { status: res.status, field: e.field, code: e.code });
   }
   return data;

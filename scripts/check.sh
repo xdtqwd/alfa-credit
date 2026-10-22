@@ -2,8 +2,8 @@
 # Проверка запущенного стека (docker compose up -d --build) одной командой.
 # На машине нужен только Docker: самопроверка (/selfcheck) уже лежит в образе сервиса.
 #
-#   ./scripts/check.sh            # здоровье, PostgreSQL, Kafka и весь путь клиента и банка через API
-#   ./scripts/check.sh --chaos    # + отказ Kafka: заявки принимаются, а после восстановления доходят до решения
+#   bash scripts/check.sh            # здоровье, PostgreSQL, Kafka и весь путь клиента и банка через API
+#   bash scripts/check.sh --chaos    # + отказ Kafka: заявки принимаются, а после восстановления доходят до решения
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

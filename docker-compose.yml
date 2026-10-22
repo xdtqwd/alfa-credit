@@ -12,6 +12,9 @@ x-app: &app
     KAFKA_BROKERS: kafka:9092
     KAFKA_PARTITIONS: "6"
     PIPELINE_STEP_DELAY: ${PIPELINE_STEP_DELAY:-3s}
+    # локальный стек — демо-режим: публичный токен кабинета банка и cookie без Secure для http://localhost.
+    # Для публичного развёртывания: APP_MODE=production, свой BANK_TOKEN (от 16 символов), HTTPS.
+    APP_MODE: ${APP_MODE:-demo}
     BANK_TOKEN: ${BANK_TOKEN:-demo-bank}
     LOG_LEVEL: ${LOG_LEVEL:-info}
     RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-20}

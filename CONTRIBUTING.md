@@ -20,7 +20,7 @@
 git switch main && git pull                 # свежий main
 git switch -c feature/short-name            # новая ветка от main
 # ... изменения ...
-./scripts/test-all.sh                       # локально: vet, тесты, e2e (если стоит Node)
+bash scripts/test-all.sh                    # локально: vet, тесты, e2e (если стоит Node)
 git add -A && git commit -m "feat: что сделано"
 git push -u origin feature/short-name       # GitHub предложит открыть pull request
 ```

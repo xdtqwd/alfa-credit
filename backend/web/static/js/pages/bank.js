@@ -71,6 +71,29 @@ function table(rows) {
       .join('')}</tbody></table></div>`;
 }
 
+/** Вход сотрудника: токен кабинета банка. В демо-режиме подходит demo-bank, в production — секрет из BANK_TOKEN. */
+function askToken(root, signal, rejected) {
+  root.innerHTML = `<div class="container">
+    ${pageHead('Кабинет сотрудника банка', 'Доступ по токену сотрудника')}
+    <form class="card stack bank-login" id="bank-login">
+      <div class="field"><label for="bank-token">Токен кабинета банка</label>
+        <input class="input" id="bank-token" type="password" autocomplete="off" required></div>
+      ${rejected ? '<p class="bank-login__error" role="alert">Токен не подошёл</p>' : ''}
+      <button class="btn btn--primary">Войти</button>
+    </form>
+  </div>`;
+  $('#bank-token', root).focus();
+  $('#bank-login', root).addEventListener(
+    'submit',
+    (e) => {
+      e.preventDefault();
+      storage.set('bank_token', $('#bank-token', root).value.trim());
+      bank(root, { signal });
+    },
+    { signal },
+  );
+}
+
 export default async function bank(root, { signal }) {
   root.className = 'page';
   const token = storage.get('bank_token', 'demo-bank');
@@ -92,6 +115,11 @@ export default async function bank(root, { signal }) {
     $('#bank-kpis', root).innerHTML = kpis(rows);
     $('#bank-table', root).innerHTML = table(rows);
   };
-  await load();
+  try {
+    await load();
+  } catch (e) {
+    if (e.status !== 401) throw e;
+    return askToken(root, signal, token !== 'demo-bank');
+  }
   every(2000, () => load().catch(() => {}), signal);
 }

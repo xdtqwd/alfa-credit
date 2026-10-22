@@ -99,6 +99,16 @@ func run(log *slog.Logger, addr string) error {
 	}
 	role := env("APP_ROLE", "all") // all | api | worker — API и обработчики событий масштабируются отдельно
 	runHTTP, runWorkers := role != "worker", role != "api"
+	// секреты и cookie нужны только API; проверяем до подключения к базе — неверный конфиг падает сразу
+	var sec securityConfig
+	if runHTTP {
+		if sec, err = loadSecurity(os.Getenv); err != nil {
+			return err
+		}
+		for _, w := range sec.Warnings {
+			log.Warn(w)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -273,8 +283,8 @@ func run(log *slog.Logger, addr string) error {
 
 	// ---------- HTTP API ----------
 	api := &httpapi.Server{
-		Svc: svc, Auth: authSvc, CookieSecure: env("COOKIE_SECURE", "false") == "true", Repo: repo, Log: log,
-		Static: web.Static(), Version: version, BankToken: env("BANK_TOKEN", "demo-bank"),
+		Svc: svc, Auth: authSvc, CookieSecure: sec.CookieSecure, Repo: repo, Log: log,
+		Static: web.Static(), Version: version, BankToken: sec.BankToken,
 		Idem: idem, Limiter: httpapi.NewRateLimiter(envFloat("RATE_LIMIT_RPS", 20), envFloat("RATE_LIMIT_BURST", 60)),
 		// для API шина некритична: при недоступной Kafka заявки принимаются, события ждут в outbox
 		RequestTimeout: reqTimeout, Degradable: ready,
@@ -298,7 +308,7 @@ func run(log *slog.Logger, addr string) error {
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", addr, "storage", storeKind, "bus", busKind, "role", role, "step_delay", stepDelay.String())
+		log.Info("listening", "addr", addr, "mode", sec.Mode, "cookie_secure", sec.CookieSecure, "storage", storeKind, "bus", busKind, "role", role, "step_delay", stepDelay.String())
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

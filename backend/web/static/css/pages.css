@@ -1213,3 +1213,11 @@
 .checks-dots i.fail {
   background: var(--bad);
 }
+
+.bank-login {
+  max-width: 420px;
+}
+.bank-login__error {
+  color: var(--bad);
+  font-size: var(--fs-s);
+}
