@@ -4,7 +4,7 @@ import { $, on } from './core/dom.js';
 import { esc } from './core/format.js';
 import { route, redirect, match, currentPath, navigate, takeScroll } from './core/router.js';
 import { session, init, subscribe, signOut, startPolling, isStaff } from './core/session.js';
-import { appPath } from './domain.js';
+import { appPath, isPreliminary } from './domain.js';
 import { closeModal, toast } from './ui/feedback.js';
 import { mountHeader, renderHeader } from './ui/header.js';
 import { icon } from './ui/icons.js';
@@ -108,7 +108,10 @@ const STATUS_NEWS = {
 };
 function announce(changes) {
   for (const a of changes) {
-    const text = STATUS_NEWS[a.status];
+    // предварительное решение зовёт к полной анкете, а не к подписанию
+    const text = isPreliminary(a)
+      ? `${a.status === 'approved' ? 'Предварительно одобрено' : 'Предварительно: другие условия'} — заполните полную анкету`
+      : STATUS_NEWS[a.status];
     if (!text || currentPath() === appPath(a)) continue; // на странице заявки статус и так обновляется
     toast(`${text} · ${a.number}`, { link: { href: appPath(a), label: 'Открыть' }, ms: 6000 });
   }

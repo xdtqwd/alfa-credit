@@ -32,6 +32,12 @@ var texts = map[domain.Status]string{
 	domain.StatusClosed:       "Кредит полностью погашен",
 }
 
+// Предварительное решение (по быстрой анкете): впереди полная анкета, а не подписание.
+var preliminaryTexts = map[domain.Status]string{
+	domain.StatusApproved:     "Кредит предварительно одобрен — заполните полную анкету в кабинете",
+	domain.StatusCounterOffer: "Банк предварительно предлагает другие условия — посмотрите в кабинете",
+}
+
 func (s *Service) Handle(ctx context.Context, e events.Event) error {
 	var text, channel string
 	p, err := events.DecodeApplication(e)
@@ -41,6 +47,9 @@ func (s *Service) Handle(ctx context.Context, e events.Event) error {
 	switch e.Type {
 	case events.TypeStatusChanged:
 		text, channel = texts[domain.Status(p.To)], "push"
+		if t, ok := preliminaryTexts[domain.Status(p.To)]; ok && p.Preliminary {
+			text = t
+		}
 	case events.TypePaymentMade:
 		text, channel = "Платёж по кредиту получен", "push"
 	}
