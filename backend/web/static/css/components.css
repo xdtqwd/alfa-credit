@@ -239,6 +239,97 @@
   color: var(--ink-2);
 }
 
+/* шапка сайта по макету Figma: Styrene A 20 px, пункты через красные разделители, без пилюль;
+   контент шириной 1140 px, как на главной */
+.header--site .container {
+  max-width: calc(1140px + 2 * var(--gutter));
+}
+.header--site .header__in {
+  gap: 59px;
+}
+.header--site .nav {
+  gap: 0;
+  font-family: var(--font-brand);
+}
+.header--site .nav__link {
+  height: 44px;
+  padding: 0 19px 0 24px;
+  border-radius: 0;
+  background: none;
+  color: #000;
+  font-size: 20px;
+  font-weight: 400;
+}
+.header--site .nav > .nav__link:first-child {
+  padding-left: 0;
+}
+.header--site .nav__link + .nav__link::before,
+.header--site .nav__link + .nav__dd .nav__link::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 1px;
+  height: 20px;
+  background: var(--brand);
+}
+.header--site .nav__link:hover,
+.header--site .nav__dd:hover .nav__more,
+.header--site .nav__dd:focus-within .nav__more {
+  background: none;
+  color: var(--brand-text);
+}
+.header--site .header__right .btn--primary {
+  height: 44px;
+  padding: 0 24px;
+  border-radius: 22px;
+  font: 700 16px / 1 var(--font-brand);
+}
+/* на главной шапка выше (120 px) и с крупным знаком — как в макете */
+.header--platinum .header__in {
+  height: 120px;
+}
+.header--platinum {
+  margin-bottom: -120px;
+}
+.header--platinum .logo__sign {
+  width: 54px; /* знак в макете — 39×60; у SVG поле 18×24 вокруг знака 13×20 */
+  height: 72px;
+  margin-left: -7px;
+}
+
+@media (max-width: 1200px) {
+  .header--site .header__in {
+    gap: 28px;
+  }
+  .header--site .nav__link {
+    padding: 0 12px 0 14px;
+    font-size: 17px;
+  }
+}
+@media (max-width: 960px) {
+  .header--platinum .header__in {
+    height: var(--header-h);
+  }
+  .header--platinum {
+    margin-bottom: calc(-1 * var(--header-h));
+  }
+  .header--platinum .logo__sign {
+    width: 26px;
+    height: 36px;
+    margin-left: 0;
+  }
+  .header--site .nav__link,
+  .header--site .nav > .nav__link:first-child {
+    padding: 12px;
+    height: auto;
+    font-size: 17px;
+  }
+  .header--site .nav__link::before {
+    display: none;
+  }
+}
+
 /* мобильная навигация: разделы — второй строкой с прокруткой, без наложений на правую часть */
 @media (max-width: 960px) {
   .header__in {
@@ -505,51 +596,12 @@
   }
 }
 
-/* ---------- плитка с иллюстрацией (кредиты на главной) — как плитки на alfabank.ru ---------- */
-.tile {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 28px 24px 24px;
-  text-align: center;
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-}
-.tile__title {
-  font-size: var(--fs-h3);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
-}
-.tile__text {
-  color: var(--ink-2);
-  font-size: 15px;
-}
-.tile .art {
-  display: block;
-  width: 100%;
-  max-width: 220px;
-  height: auto;
-  margin: 6px auto 0;
-  filter: drop-shadow(0 14px 16px rgba(31, 36, 38, 0.13));
-  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.3, 1.2);
-}
-.tile:hover .art {
-  transform: translateY(-4px) scale(1.03);
-}
-
 /* ---------- карточки, панели ---------- */
 .card {
   background: #fff;
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-l);
   padding: 24px;
-}
-.card--flat {
-  background: var(--surface);
-  border-color: transparent;
 }
 .card__head {
   display: flex;
@@ -565,12 +617,6 @@
 .card__title {
   font-size: var(--fs-l);
   margin-bottom: 16px;
-}
-.callout {
-  font-size: 26px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin-bottom: 8px;
 }
 @media (max-width: 640px) {
   .card {
@@ -1436,73 +1482,80 @@ a.list-item:hover .list-item__title {
 
 /* ---------- футер ---------- */
 /* подвал — платина, как шапка главной, со скруглёнными верхними углами, как на alfabank.ru */
+/* подвал по макету Figma: платина, скругление 48 px сверху, три колонки (Styrene A) */
 .footer {
   position: relative;
-  overflow: hidden;
   margin-top: 24px;
-  padding: 56px 0 64px;
+  min-height: 500px;
+  padding: 47px 0 64px;
   border-radius: 48px 48px 0 0;
-  background: var(--platinum-sheen);
-  color: var(--ink);
-}
-.footer::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.5) 0 1px, transparent 1px 4px);
-  mix-blend-mode: soft-light;
+  background: var(--platinum-figma);
+  color: #000;
+  font-family: var(--font-brand);
 }
 .footer .container {
-  position: relative;
+  max-width: calc(1140px + 2 * var(--gutter));
 }
 .footer__crumbs {
   display: flex;
-  gap: 10px;
-  margin-bottom: 40px;
-  font-size: var(--fs-m);
+  flex-wrap: wrap;
+  gap: 8px 54px;
+  margin: 0 0 110px;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
 }
 .footer__grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 32px;
+  grid-template-columns: 570px 310px minmax(0, 1fr);
 }
 .footer__col {
   display: grid;
-  gap: 12px;
+  gap: 16px;
   align-content: start;
 }
 .footer__col:first-child {
-  grid-column: span 2;
-  max-width: 460px;
+  max-width: 420px;
 }
 .footer__title {
-  margin-bottom: 4px;
-  font-size: 13px;
-  letter-spacing: 0.14em;
+  margin-bottom: 16px;
+  font-size: 16px;
+  font-weight: 400;
   text-transform: uppercase;
-  color: var(--ink-3);
 }
 .footer__col a {
-  color: var(--ink);
-  font-size: var(--fs-m);
+  color: #000;
+  font-size: 16px;
+  line-height: 1.25;
   transition: color 0.15s;
 }
 .footer__col a:hover {
   color: var(--brand-text);
 }
 .footer__col p {
-  color: var(--ink-2);
+  margin: 0;
+  font-size: 16px;
+  font-weight: 300;
+  line-height: 1.25;
+}
+@media (max-width: 1024px) {
+  .footer__grid {
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+    gap: 32px;
+  }
 }
 @media (max-width: 720px) {
   .footer {
+    min-height: 0;
     border-radius: 32px 32px 0 0;
+  }
+  .footer__crumbs {
+    margin-bottom: 40px;
   }
   .footer__grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .footer__col:first-child {
-    grid-column: auto;
+  .footer__title {
+    margin-bottom: 4px;
   }
 }

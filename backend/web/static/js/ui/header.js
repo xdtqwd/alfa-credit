@@ -1,5 +1,6 @@
 // Шапка: одна для всего сайта, два режима.
-//   site    — разделы продуктовой страницы и «Услуги для бизнеса», справа «Войти» или аватар;
+//   site    — разделы продуктовой страницы и «Услуги бизнеса» (по макету Figma — через красные
+//             разделители, шрифт Styrene A), справа «Войти» или аватар;
 //   cabinet — вкладки кабинета «Профиль · Заявки · Кредиты · Сообщения», справа «Новый кредит» и аватар;
 //             у сотрудника банка — «Очередь заявок · Профиль», без «Нового кредита».
 // «Услуги для бизнеса» — мега-меню как на alfabank.ru: панель во всю ширину, слева заголовок и ссылка
@@ -99,7 +100,7 @@ function navHtml(m) {
   }
   return `${SITE_LINKS.map(([id, label]) => `<a class="nav__link" href="#/" data-section="${id}">${label}</a>`).join('')}
     <div class="nav__dd">
-      <button class="nav__link nav__more" type="button" aria-haspopup="true" aria-controls="services">Услуги для бизнеса ${icon('chev', 20)}</button>
+      <button class="nav__link nav__more" type="button" aria-haspopup="true" aria-controls="services">Услуги бизнеса</button>
       ${servicesHtml()}
     </div>`;
 }

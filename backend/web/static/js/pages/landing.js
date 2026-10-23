@@ -1,42 +1,56 @@
-// Главная: продуктовая страница кредитов для бизнеса. Калькулятор — на первом экране.
-import { $, $$, on, storage } from '../core/dom.js';
-import { esc, fmt, months, rate, rub } from '../core/format.js';
+// Главная: продуктовая страница кредитов для бизнеса — вёрстка по макету Figma «УККП».
+// Все действия прежние: калькулятор считает сервер, «Оформить» открывает анкету продукта,
+// «Рассчитать» переносит продукт в калькулятор, вопросы раскрываются.
+import { $, on, storage } from '../core/dom.js';
+import { esc, fmt, rate, rub, shortRub } from '../core/format.js';
 import { session, product } from '../core/session.js';
 import { accordion } from '../ui/accordion.js';
-import { heroArt, productArt } from '../ui/art.js';
-import { icon } from '../ui/icons.js';
-import { calcFields, bindCalc, createQuoter, quoteRows } from '../features/calculator.js';
+import { calcFields, bindCalc, createQuoter } from '../features/calculator.js';
 import { startApplication } from '../features/loan.js';
 
-// «Как получить»: три шага, как на alfabank.ru. Кольцо над карточкой заполняется по мере продвижения.
-const STEPS = [
-  ['Заполните анкету', 'Данные компании подставятся из профиля — останутся выручка и согласие'],
-  ['Получите решение за 15 секунд', 'Банк проверит компанию и покажет условия прямо на странице'],
-  ['Подпишите и получите деньги', 'Договор подписывается в кабинете, деньги приходят на расчётный счёт'],
-];
-
-/** Кольцо шага: серый пунктир и красная дуга на долю пройденного пути. */
-const ring = (i, n) => {
-  const len = 2 * Math.PI * 33;
-  return `<svg class="road__ring" viewBox="0 0 72 72" aria-hidden="true">
-    <circle cx="36" cy="36" r="33" fill="none" stroke="#C9CBCE" stroke-width="2" stroke-dasharray="3 4"/>
-    <circle cx="36" cy="36" r="33" fill="none" stroke="#EF3124" stroke-width="2.5" stroke-linecap="round"
-      stroke-dasharray="${(len * (i + 1)) / n} ${len}" transform="rotate(-90 36 36)"/>
-  </svg>`;
-};
+const IMG = 'img/landing/';
 
 const BENEFITS = [
-  ['bolt', 'Решение за 15 секунд', 'Банк проверяет компанию и считает нагрузку автоматически — ответ приходит, пока открыта страница.'],
-  ['doc', 'Без документов', 'Данные компании берём из ЕГРЮЛ, выручку — из налоговой. Не нужно ничего сканировать.'],
-  ['percent', 'Понятное решение', 'Показываем балл, плюсы и минусы заявки. При других условиях — сравнение с тем, что вы просили.'],
-  ['wallet', 'Всё в одном кабинете', 'Подписание, график и платежи — там же, где заявка. Деньги приходят на расчётный счёт.'],
+  ['bolt.webp', 'Быстрое решение', 'Мы проверяем компанию и считаем нагрузку автоматически – ответ приходит, пока страница открыта.'],
+  ['doc.svg', 'Без лишних документов', 'Данные компании берем из ЕГРЮЛ, выручку – из налоговой. Не нужно сканировать пачки документов.'],
+  [
+    'scales.webp',
+    'Прозрачный процесс',
+    'Показываем решение системы, плюсы и минусы заявки. При других условиях – сравнение с тем, что вы просили.',
+  ],
+  ['wallet.webp', 'Всё в одном кабинете', 'Подписание, графики и платежи – там же, где и заявка. Деньги приходят сразу на расчетный счет'],
+];
+
+// Картинки продуктов из макета; у продукта без картинки карточка остаётся без иллюстрации.
+const PRODUCT_IMG = {
+  'business-dev': 'business-dev.webp',
+  'working-capital': 'working-capital.webp',
+  equipment: 'equipment.webp',
+  overdraft: 'overdraft.webp',
+};
+
+// Названия карточек — из макета (в каталоге продукт называется «На оборудование и транспорт»).
+const PRODUCT_TITLE = { equipment: 'На транспорт и оборудование' };
+
+// Подписи карточек — из макета; у овердрафта в макете повторён текст «Кредита на развитие»,
+// поэтому для него остаётся описание продукта из каталога.
+const PRODUCT_TEXT = {
+  'business-dev': 'На запуск направления, ремонт, маркетинг и любые другие цели бизнеса',
+  'working-capital': 'На закупку товара и сырья, кассовые разрывы, зарплаты сотрудникам',
+  equipment: 'Покупка оборудования, спецтехники и перевозки',
+};
+
+const STEPS = [
+  ['Заполните анкету', 'Получите предварительный расчет. Данные компании подтянутся автоматически.'],
+  ['Пройдите проверку', 'Мы проверим компанию и покажем условия прямо на странице.'],
+  ['Получите деньги', 'Подпишите договор и деньги поступят на расчетный счет.'],
 ];
 
 const REQUIREMENTS = [
   'ИП или ООО, зарегистрированные в России',
-  'Компания действует по данным ЕГРЮЛ/ЕГРИП',
+  'Компания действует по правилам ЕГРЮЛ/ЕГРИП',
   'Нет текущих просрочек по кредитам',
-  'Платежи по всем кредитам — не больше 50% месячной выручки',
+  'Платежи по кредитам – не более 50% месячной выручки',
 ];
 
 const FAQ = [
@@ -46,15 +60,17 @@ const FAQ = [
   ],
   [
     'Какие документы нужны?',
-    'Никаких. Данные компании берём из ЕГРЮЛ, выручку можно подставить из данных ФНС, договор подписывается простой электронной подписью в кабинете.',
+    'Только паспорт. Данные компании берём из ЕГРЮЛ, выручку можно подставить из данных ФНС, договор подписывается электронной подписью в кабинете.',
   ],
-  ['Сколько ждать решения?', 'Обычно 10–20 секунд после отправки анкеты. Страницу можно закрыть — статус сохранится в кабинете.'],
+  ['Сколько ждать решение?', 'Обычно 10–20 секунд после отправки анкеты. Страницу можно закрыть — статус сохранится в кабинете.'],
   [
     'Что если банк предложит другие условия?',
     'Покажем таблицу «Вы просили / Банк предлагает» с суммой, сроком, ставкой, платежом и переплатой и объясним причину на цифрах из анкеты. Принять или отказаться — решаете вы.',
   ],
-  ['Можно ли погасить досрочно?', 'Да. Платежи вносятся с расчётного счёта прямо в кабинете.'],
+  ['Можно ли погасить кредит досрочно?', 'Да. Платежи вносятся с расчётного счёта прямо в кабинете.'],
 ];
+
+const sectionTitle = (text) => `<h2 class="lp-title">${text}</h2>`;
 
 export default async function landing(root, { signal, scroll }) {
   const products = session.products;
@@ -63,77 +79,76 @@ export default async function landing(root, { signal, scroll }) {
   let amount = saved.product === p.id && saved.amount ? saved.amount : p.default_amount;
   let term = saved.product === p.id && saved.term ? saved.term : p.default_term;
 
-  const minRate = Math.min(...products.map((x) => x.rate));
-
   root.className = 'page page--landing';
   root.innerHTML = `
-    <section class="hero">
-      <span class="glint glint--1"></span><span class="glint glint--2"></span><span class="glint glint--3"></span><span class="glint glint--4"></span>
-      <div class="container hero__in">
-          <div class="hero__text">
-            <h1>Кредиты для бизнеса от ${rate(minRate)}</h1>
-            <p class="hero__lead">Деньги на развитие бизнеса — решение за 15 секунд, без визита в банк</p>
-            <button class="btn btn--primary btn--lg" data-start="business-dev">Оформить заявку</button>
-          </div>
-          ${heroArt()}
+    <section class="hero lp-hero">
+      <div class="lp-container lp-hero__in">
+        <div class="lp-hero__text">
+          <h1>Деньги, когда они нужны бизнесу</h1>
+          <p class="lp-hero__lead">Кредит на развитие бизнеса – решение за 15 секунд, без визита в банк</p>
+          <button class="lp-btn lp-btn--hero" data-start="business-dev">Оформить заявку</button>
+        </div>
+        <img class="lp-hero__art" src="${IMG}hero.webp" width="500" height="311" alt="" fetchpriority="high">
       </div>
     </section>
 
-    <div class="landing-body">
+    <div class="lp-body">
 
-    <section class="section" id="calc">
-      <div class="container">
-        <div class="section__head"><h2 class="title-f">Рассчитайте кредит</h2></div>
-        <div class="calc">
-          <div class="calc__form">
-            <div class="chips" role="radiogroup" aria-label="Кредит">${products
-              .map(
-                (x) => `
-              <button class="chip ${x.id === p.id ? 'is-on' : ''}" data-calc-product="${x.id}" role="radio" aria-checked="${x.id === p.id}">${esc(x.name)}</button>`,
-              )
-              .join('')}
+    <section class="lp-section lp-section--calc" id="calc">
+      <div class="lp-container">
+        ${sectionTitle('Рассчитайте выгоду')}
+        <div class="lp-calc">
+          <div class="lp-calc__form">
+            <div class="lp-calc__fields" id="calc-fields"></div>
+            <div class="lp-need">
+              <span class="lp-need__title">Вам понадобится</span>
+              <span class="lp-need__items">
+                <span class="lp-need__item"><img src="${IMG}passport.svg" width="26" height="26" alt="">Паспорт</span>
+                <span class="lp-need__item"><img src="${IMG}house.svg" width="30" height="30" alt="">Залог</span>
+              </span>
             </div>
-            <div class="stack" id="calc-fields"></div>
           </div>
-          <div class="calc__result">
-            <div class="calc__pay"><span>Платёж в месяц</span><b id="calc-pay">—</b></div>
-            <div id="calc-rows"></div>
-            <button class="btn btn--primary btn--block" data-calc-apply>Оформить онлайн</button>
-            <p class="calc__note">Расчёт предварительный. Параметры перенесутся в анкету — вводить заново не нужно.</p>
+          <div class="lp-offer">
+            <h3 class="lp-offer__title">Наше предложение</h3>
+            <div class="lp-offer__pay"><span>Ежемесячный платеж</span><b id="calc-pay">—</b></div>
+            <div class="lp-offer__row"><span>Ставка*</span><b id="calc-rate">—</b></div>
+            <div class="lp-offer__row"><span>Переплата</span><b id="calc-over">—</b></div>
+            <button class="lp-btn lp-btn--block" data-calc-apply>Оформить онлайн</button>
+            <p class="lp-offer__note">Расчет предварительный. Параметры перенесутся в анкету – вводить заново не нужно. *Ставка от 17,99% до 55,39% годовых определяется индивидуально</p>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="section" id="benefits">
-      <div class="container">
-        <div class="benefits">${BENEFITS.map(
-          ([ic, t, d]) => `
-          <div class="benefit"><span class="benefit__ic">${icon(ic, 24)}</span><h3>${t}</h3><p>${d}</p></div>`,
-        ).join('')}
-        </div>
+    <section class="lp-section lp-section--benefits" id="benefits">
+      <div class="lp-container lp-cards4">${BENEFITS.map(
+        ([img, t, d]) => `
+        <div class="lp-benefit">
+          <span class="lp-benefit__ic"><img src="${IMG}${img}" width="40" height="40" alt=""></span>
+          <h3>${t}</h3>
+          <p>${d}</p>
+        </div>`,
+      ).join('')}
       </div>
     </section>
 
-    <section class="section" id="products">
-      <div class="container">
-        <div class="section__head"><h2 class="title-f">Выберите кредит</h2></div>
-        <div class="products">${products
+    <section class="lp-section" id="products">
+      <div class="lp-container">
+        ${sectionTitle('Выберите кредит')}
+        <div class="lp-cards4 lp-products">${products
           .map(
             (x) => `
-          <article class="product tile" data-product="${x.id}">
-            ${x.badge ? `<span class="product__badge">${esc(x.badge)}</span>` : ''}
-            <h3 class="tile__title">${esc(x.name)}</h3>
-            <p class="tile__text">${esc(x.description)}</p>
-            ${productArt(x.id)}
-            <dl class="kv">
+          <article class="lp-product" data-product="${x.id}">
+            <h3 class="lp-product__title">${esc(PRODUCT_TITLE[x.id] || x.name)}</h3>
+            <p class="lp-product__text">${esc(PRODUCT_TEXT[x.id] || x.description)}</p>
+            <div class="lp-product__art">${PRODUCT_IMG[x.id] ? `<img src="${IMG}${PRODUCT_IMG[x.id]}" width="160" height="160" alt="" loading="lazy">` : ''}</div>
+            <dl class="lp-product__kv">
               <div><dt>Ставка</dt><dd>от ${rate(x.rate)}</dd></div>
-              <div><dt>Сумма</dt><dd>до ${fmt(x.max_amount)} ₽</dd></div>
-              <div><dt>Срок</dt><dd>${x.min_term === x.max_term ? months(x.max_term) : `до ${months(x.max_term)}`}</dd></div>
+              <div><dt>Сумма</dt><dd>до ${shortRub(x.max_amount)}</dd></div>
             </dl>
-            <div class="product__actions">
-              <button class="btn btn--primary btn--sm" data-start="${x.id}">Оформить</button>
-              <button class="btn btn--secondary btn--sm" data-calc-pick="${x.id}">Рассчитать</button>
+            <div class="lp-product__actions">
+              <button class="lp-btn lp-btn--sm" data-start="${x.id}" aria-label="Оформить: ${esc(x.name)}">Оформить</button>
+              <button class="lp-btn lp-btn--sm lp-btn--gray" data-calc-pick="${x.id}" aria-label="Рассчитать: ${esc(x.name)}">Рассчитать</button>
             </div>
           </article>`,
           )
@@ -142,37 +157,37 @@ export default async function landing(root, { signal, scroll }) {
       </div>
     </section>
 
-    <section class="section" id="how">
-      <div class="container">
-        <h2 class="section__title-c">Как получить кредит</h2>
-        <ol class="road">${STEPS.map(
+    <section class="lp-section lp-section--how" id="how">
+      <div class="lp-container">
+        <h2 class="lp-title-c">Как получить кредит</h2>
+        <ol class="lp-road">${STEPS.map(
           ([t, d], i) => `
-          <li class="road__step">
-            <span class="road__dot">${ring(i, STEPS.length)}<b>${i + 1}</b></span>
-            <div class="road__card"><h3>${t}</h3><p>${d}</p></div>
+          <li class="lp-road__step">
+            <img class="lp-road__ring" src="${IMG}step-${i + 1}.svg" width="64" height="64" alt="Шаг ${i + 1}">
+            <div class="lp-road__card"><h3>${t}</h3><p>${d}</p></div>
           </li>`,
         ).join('')}
         </ol>
       </div>
     </section>
 
-    <section class="section" id="requirements">
-      <div class="container grid-2">
-        <div class="card card--flat">
-          <h2 class="card__title">Требования</h2>
-          <ul class="checklist">${REQUIREMENTS.map((r) => `<li>${icon('checkCircle', 20)}<span>${r}</span></li>`).join('')}</ul>
+    <section class="lp-section lp-section--req" id="requirements">
+      <div class="lp-container lp-req">
+        <div class="lp-req__card">
+          <h2>Требования</h2>
+          <ul class="lp-checklist">${REQUIREMENTS.map((r) => `<li><img src="${IMG}check.svg" width="20" height="20" alt="">${r}</li>`).join('')}</ul>
         </div>
-        <div class="card card--flat">
-          <h2 class="card__title">Документы</h2>
-          <p class="callout">Не нужны</p>
-          <p class="muted">Данные компании берём из ЕГРЮЛ, выручку — из данных налоговой. Договор подписывается простой электронной подписью в кабинете.</p>
+        <div class="lp-req__card">
+          <h2>Документы</h2>
+          <p class="lp-req__lead">Понадобится только паспорт</p>
+          <p>Данные компании берем из ЕГРЮЛ/ЕГРИП, выручку – из данных налоговой. Договор подписывается системой Госключ.</p>
         </div>
       </div>
     </section>
 
-    <section class="section" id="faq">
-      <div class="container">
-        <h2 class="section__title-l">Частые вопросы</h2>
+    <section class="lp-section lp-section--faq" id="faq">
+      <div class="lp-container">
+        ${sectionTitle('Частые вопросы')}
         <div class="faq-list">${FAQ.map(([q, a], i) => accordion({ key: `faq-${i}`, header: q, body: `<p>${a}</p>`, cls: 'faq' })).join('')}</div>
       </div>
     </section>
@@ -184,7 +199,8 @@ export default async function landing(root, { signal, scroll }) {
     (q) => {
       pay.textContent = rub(q.monthly_payment);
       pay.classList.remove('is-stale');
-      $('#calc-rows', root).innerHTML = quoteRows(q);
+      $('#calc-rate', root).textContent = `от ${String(q.rate).replace('.', ',')}%`;
+      $('#calc-over', root).textContent = `${fmt(q.overpayment)} ₽`;
     },
     () => {
       pay.textContent = '—';
@@ -206,21 +222,16 @@ export default async function landing(root, { signal, scroll }) {
     });
     recalc();
   };
+  // продукт калькулятора выбирается кнопкой «Рассчитать» в карточке продукта
   const pick = (id) => {
     p = product(id);
     amount = p.default_amount;
     term = p.default_term;
-    $$('[data-calc-product]', root).forEach((c) => {
-      const active = c.dataset.calcProduct === id;
-      c.classList.toggle('is-on', active);
-      c.setAttribute('aria-checked', active);
-    });
     paintFields();
   };
   paintFields();
 
   // --- действия ---
-  on(root, 'click', '[data-calc-product]', (_, el) => pick(el.dataset.calcProduct), signal);
   on(
     root,
     'click',

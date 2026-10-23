@@ -55,7 +55,7 @@ const checkDots = (checks) =>
 
 function table(rows) {
   if (!rows.length) return '<div class="empty">Заявок пока нет — оформите кредит на главной</div>';
-  return `<div class="table-wrap"><table class="table">
+  return `<div class="table-wrap" tabindex="0" role="region" aria-label="Заявки конвейера"><table class="table">
     <thead><tr><th>№</th><th>Компания</th><th>Продукт</th><th class="num">Запрошено</th><th>Статус</th><th class="num">Балл</th><th>Решение</th><th>Проверки</th><th>Обновлено</th></tr></thead>
     <tbody>${rows
       .map(

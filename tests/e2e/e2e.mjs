@@ -144,7 +144,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   await test('Гость видит продуктовую страницу: разделы сайта и «Войти», вкладок кабинета нет', async (page) => {
     await page.goto(BASE + '/');
     await page.waitForSelector('.hero h1');
-    assert(norm(await page.textContent('.hero h1')).startsWith('Кредиты для бизнеса'), 'нет заголовка');
+    assert(norm(await page.textContent('.hero h1')) === 'Деньги, когда они нужны бизнесу', 'нет заголовка из макета');
     assert((await page.locator('.header--cabinet').count()) === 0, 'гостю показана шапка кабинета');
     assert(await page.locator('[data-header=login]').isVisible(), 'нет кнопки «Войти»');
   });
@@ -166,7 +166,29 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     const shown = norm(await page.textContent('#calc-pay'));
     const q = await apiAs(page, 'POST', '/calc', { product_id: 'business-dev', amount: 3000000, term_months: 24 });
     assert(shown === norm(fmtRub(q.json.monthly_payment)), `на экране ${shown}, сервер ${q.json.monthly_payment}`);
-    assert(norm(await page.textContent('#calc-rows')).includes(norm(fmtRub(q.json.overpayment))), 'переплата не совпадает с сервером');
+    assert(norm(await page.textContent('#calc-over')) === norm(fmtRub(q.json.overpayment)), 'переплата не совпадает с сервером');
+  });
+
+  await test('Главная по макету: «Рассчитать» переносит продукт в калькулятор, ссылки подвала ведут в разделы и кабинет банка', async (page) => {
+    await page.goto(BASE + '/');
+    await page.waitForFunction(() => /\d/.test(document.querySelector('#calc-pay')?.textContent || ''));
+    assert((await page.locator('#products .lp-product').count()) === 4, 'должно быть четыре карточки кредитов');
+    await page.click('#products [data-calc-pick="working-capital"]');
+    await page.waitForFunction(() => document.querySelector('#calc').getBoundingClientRect().top < 200);
+    const q = await apiAs(page, 'POST', '/calc', { product_id: 'working-capital', amount: 1000000, term_months: 12 });
+    await page.waitForFunction(
+      (t) => document.querySelector('#calc-pay')?.textContent.replace(/\s+/g, ' ').trim() === t,
+      norm(fmtRub(q.json.monthly_payment)),
+    );
+    assert(
+      norm(await page.textContent('#calc-rate')) === `от ${String(q.json.rate).replace('.', ',')}%`,
+      'ставка калькулятора — не с сервера',
+    );
+    await page.click('.footer [data-section=faq]');
+    await page.waitForFunction(() => document.getElementById('faq').getBoundingClientRect().top < 300);
+    await page.click('.footer a[href="#/bank"]');
+    await page.waitForSelector('.bank-gate');
+    assert(norm(await page.textContent('.footer')).includes('Кабинет администратора'), 'в подвале нет ссылки на кабинет администратора');
   });
 
   await test('Срок можно вписать числом: ползунок и платёж следуют, лишнее прижимается к границам', async (page) => {
@@ -459,7 +481,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     );
   });
 
-  await test('«Услуги для бизнеса»: список ссылок на alfabank.ru открывается наведением, в новой вкладке', async (page) => {
+  await test('«Услуги бизнеса»: список ссылок на alfabank.ru открывается наведением, в новой вкладке', async (page) => {
     await page.goto(BASE + '/#/');
     await page.waitForSelector('.hero h1');
     assert((await page.locator('.topbar').count()) === 0, 'полоски сегментов над шапкой быть не должно');
