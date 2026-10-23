@@ -3,7 +3,7 @@ import { setUnauthorizedHandler } from './core/api.js';
 import { $, on } from './core/dom.js';
 import { esc } from './core/format.js';
 import { route, redirect, match, currentPath, navigate, takeScroll } from './core/router.js';
-import { session, init, subscribe, signOut, startPolling } from './core/session.js';
+import { session, init, subscribe, signOut, startPolling, isStaff } from './core/session.js';
 import { appPath } from './domain.js';
 import { closeModal, toast } from './ui/feedback.js';
 import { mountHeader, renderHeader } from './ui/header.js';
@@ -16,6 +16,7 @@ import application from './pages/application.js';
 import credits from './pages/credits.js';
 import messages from './pages/messages.js';
 import bank from './pages/bank.js';
+import staffProfile from './pages/staff-profile.js';
 
 // ---------- маршруты ----------
 route('/', landing, { area: 'site', platinum: true }); // главная — платиновая тема для предпринимателей
@@ -24,7 +25,9 @@ route('/cabinet/applications', applications, { area: 'cabinet', tab: 'applicatio
 route('/cabinet/applications/:id', application, { area: 'cabinet', tab: 'applications', auth: true });
 route('/cabinet/credits', credits, { area: 'cabinet', tab: 'credits', auth: true });
 route('/cabinet/messages', messages, { area: 'cabinet', tab: 'messages', auth: true });
-route('/bank', bank, { area: 'site' });
+// кабинет банка: сотрудник входит по телефону и паролю (или по служебному токену)
+route('/bank', bank, { area: 'cabinet', tab: 'queue', staff: true });
+route('/bank/profile', staffProfile, { area: 'cabinet', tab: 'profile', staff: true });
 
 // старые адреса
 redirect('/products', '/');
@@ -70,8 +73,14 @@ async function render() {
   controller?.abort();
   controller = new AbortController();
   const { signal } = controller;
+  // роли не смешиваются: сотрудник банка не открывает кабинет компании, а профиль сотрудника — только для сотрудника
+  if (m.meta.auth && isStaff()) return navigate('/bank');
+  if (m.path === '/bank/profile' && !isStaff()) return navigate('/bank');
+
   closeModal();
-  renderHeader({ area: m.meta.area, tab: m.meta.tab || '', platinum: !!m.meta.platinum });
+  // гостю и клиенту на странице кабинета банка — обычная шапка сайта, а не вкладки чужого кабинета
+  const area = m.meta.staff && !isStaff() ? 'site' : m.meta.area;
+  renderHeader({ area, tab: m.meta.tab || '', platinum: !!m.meta.platinum });
   const root = freshRoot();
   const scroll = takeScroll();
   if (!scroll) window.scrollTo(0, 0);
@@ -113,7 +122,8 @@ async function boot() {
     if (!session.me) return;
     signOut();
     toast('Сессия истекла, войдите снова', { error: true });
-    if (match(currentPath())?.meta.auth) render();
+    const meta = match(currentPath())?.meta;
+    if (meta?.auth || meta?.staff) render();
   });
   // ссылки на разделы главной из подвала
   on(document.body, 'click', '.footer [data-section]', (e, el) => {

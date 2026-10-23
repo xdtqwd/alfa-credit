@@ -20,6 +20,9 @@ const emit = (changes = []) => listeners.forEach((fn) => fn(changes));
 
 export const product = (id) => session.products.find((p) => p.id === id);
 
+/** Вошёл сотрудник банка: у него кабинет банка вместо кабинета компании. */
+export const isStaff = (me = session.me) => me?.role === 'employee';
+
 export async function init() {
   const [products, me] = await Promise.all([api('GET', '/products'), api('GET', '/me').catch(() => null)]);
   session.products = products;
@@ -33,7 +36,8 @@ export async function init() {
  */
 export async function refresh({ quiet = false } = {}) {
   if (!session.me) return [];
-  const [me, apps] = await Promise.all([api('GET', '/me'), api('GET', '/applications')]);
+  // у сотрудника банка нет своих заявок — только профиль; очередь заявок грузит экран кабинета банка
+  const [me, apps] = await Promise.all([api('GET', '/me'), isStaff() ? [] : api('GET', '/applications')]);
   const before = new Map(session.apps.map((a) => [a.id, a.status]));
   const changes = quiet ? [] : apps.filter((a) => before.has(a.id) && before.get(a.id) !== a.status);
   session.me = me;

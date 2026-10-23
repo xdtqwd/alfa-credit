@@ -65,14 +65,15 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/v1/products", s.public(s.products))
 	mux.HandleFunc("GET /api/v1/scoring/scale", s.public(s.scale))
+	mux.HandleFunc("GET /api/v1/security-rules", s.public(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, domain.Security()) }))
 	mux.HandleFunc("POST /api/v1/calc", s.calc)
 	mux.HandleFunc("GET /api/v1/companies/{inn}", s.company)
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/register", s.register)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
-	mux.HandleFunc("GET /api/v1/me", s.client(s.me))
-	mux.HandleFunc("PATCH /api/v1/me", s.client(s.updateMe))
+	mux.HandleFunc("GET /api/v1/me", s.signedIn(s.me))
+	mux.HandleFunc("PATCH /api/v1/me", s.signedIn(s.updateMe))
 
 	mux.HandleFunc("POST /api/v1/applications", s.client(s.idempotent(s.create)))
 	mux.HandleFunc("GET /api/v1/applications", s.client(s.list))
@@ -84,9 +85,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/applications/{id}/sign", s.client(s.idempotent(s.sign)))
 	mux.HandleFunc("POST /api/v1/applications/{id}/pay", s.client(s.idempotent(s.action(s.Svc.Pay))))
 
-	mux.HandleFunc("GET /api/v1/bank/applications", s.bank(s.bankList))
-	mux.HandleFunc("GET /api/v1/bank/applications/{id}/audit", s.bank(s.bankAudit))
-	mux.HandleFunc("GET /api/v1/bank/platform", s.bank(s.platform))
+	mux.HandleFunc("GET /api/v1/bank/applications", s.bank(domain.PermViewApplications, s.bankList))
+	mux.HandleFunc("GET /api/v1/bank/applications/{id}/audit", s.bank(domain.PermViewAudit, s.bankAudit))
+	mux.HandleFunc("GET /api/v1/bank/platform", s.bank(domain.PermViewPlatform, s.platform))
 
 	// неизвестные пути API — JSON 404/405, а не HTML файлового сервера
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { s.apiNotFound(mux, w, r) })
@@ -235,28 +236,60 @@ const clientKey ctxKey = "client"
 
 const sessionCookie = "sid"
 
-// client — требует авторизованную сессию (HttpOnly cookie). Без входа нельзя оформить,
-// подписать или оплатить. В проде: OIDC (Альфа ID) на API Gateway.
-func (s *Server) client(h http.HandlerFunc) http.HandlerFunc {
+const userKey ctxKey = "user"
+
+// sessionUser — пользователь по cookie сессии; nil и false, если сессии нет или она истекла.
+// Роль читается из хранилища на каждом запросе: снятый с сотрудника доступ действует сразу.
+func (s *Server) sessionUser(w http.ResponseWriter, r *http.Request) (*domain.User, bool) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return nil, false
+	}
+	uid, ok := s.Auth.Sessions.Get(r.Context(), c.Value)
+	if !ok {
+		s.clearCookie(w)
+		return nil, false
+	}
+	u, err := s.Auth.Me(r.Context(), uid)
+	if err != nil {
+		s.clearCookie(w)
+		return nil, false
+	}
+	return u, true
+}
+
+func withUser(r *http.Request, u *domain.User) *http.Request {
+	if info, ok := r.Context().Value(infoKey).(*reqInfo); ok {
+		info.client = u.ID
+	}
+	ctx := obs.WithActor(context.WithValue(context.WithValue(r.Context(), clientKey, u.ID), userKey, u), u.ID)
+	ctx = obs.WithLogger(ctx, obs.L(ctx).With("client", u.ID, "role", u.Role))
+	return r.WithContext(ctx)
+}
+
+// signedIn — любой вошедший пользователь (клиент или сотрудник банка): профиль, выход.
+func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		if err != nil {
+		u, ok := s.sessionUser(w, r)
+		if !ok {
 			writeErr(w, 401, "unauthorized", "войдите, чтобы продолжить", "")
 			return
 		}
-		uid, ok := s.Auth.Sessions.Get(r.Context(), c.Value)
-		if !ok {
-			s.clearCookie(w)
-			writeErr(w, 401, "unauthorized", "сессия истекла, войдите снова", "")
+		h(w, withUser(r, u))
+	}
+}
+
+// client — разделы представителя бизнеса (HttpOnly cookie). Без входа нельзя оформить,
+// подписать или оплатить; сотрудник банка заявок от имени компании не подаёт.
+// В проде: OIDC (Альфа ID) на API Gateway.
+func (s *Server) client(h http.HandlerFunc) http.HandlerFunc {
+	return s.signedIn(func(w http.ResponseWriter, r *http.Request) {
+		if currentUser(r).IsEmployee() {
+			writeErr(w, 403, "forbidden", "раздел для клиентов — сотрудник банка работает в кабинете банка", "")
 			return
 		}
-		if info, ok := r.Context().Value(infoKey).(*reqInfo); ok {
-			info.client = uid
-		}
-		ctx := obs.WithActor(context.WithValue(r.Context(), clientKey, uid), uid)
-		ctx = obs.WithLogger(ctx, obs.L(ctx).With("client", uid))
-		h(w, r.WithContext(ctx))
-	}
+		h(w, r)
+	})
 }
 
 func (s *Server) setCookie(w http.ResponseWriter, tok string) {
@@ -270,15 +303,36 @@ func (s *Server) clearCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1, SameSite: http.SameSiteStrictMode})
 }
 
-func (s *Server) bank(h http.HandlerFunc) http.HandlerFunc {
+// bank — кабинет банка. Два способа доступа:
+//   - сессия сотрудника банка с нужным правом (вход по телефону и паролю, как у клиента);
+//   - заголовок X-Bank-Token — для служебных интеграций и скриптов (BANK_TOKEN).
+//
+// Клиенту с сессией — 403, без сессии и токена — 401.
+func (s *Server) bank(perm string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Bank-Token")), []byte(s.BankToken)) != 1 {
-			writeErr(w, 401, "unauthorized", "неверный X-Bank-Token", "")
+		if tok := r.Header.Get("X-Bank-Token"); tok != "" {
+			if subtle.ConstantTimeCompare([]byte(tok), []byte(s.BankToken)) != 1 {
+				writeErr(w, 401, "unauthorized", "неверный X-Bank-Token", "")
+				return
+			}
+			h(w, r.WithContext(obs.WithActor(r.Context(), "bank")))
 			return
 		}
-		h(w, r.WithContext(obs.WithActor(r.Context(), "bank")))
+		u, ok := s.sessionUser(w, r)
+		switch {
+		case !ok:
+			writeErr(w, 401, "unauthorized", "войдите как сотрудник банка", "")
+		case !u.IsEmployee():
+			writeErr(w, 403, "forbidden", "кабинет банка доступен только сотрудникам банка", "")
+		case !u.Can(perm):
+			writeErr(w, 403, "forbidden", "у вашей учётной записи нет доступа к этому разделу", "")
+		default:
+			h(w, withUser(r, u))
+		}
 	}
 }
+
+func currentUser(r *http.Request) *domain.User { return r.Context().Value(userKey).(*domain.User) }
 
 func clientID(r *http.Request) string { return r.Context().Value(clientKey).(string) }
 
@@ -324,12 +378,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	u, err := s.Auth.Me(r.Context(), clientID(r))
-	if err != nil {
-		s.fail(w, r, domain.ErrUnauthorized)
-		return
-	}
-	writeJSON(w, 200, u)
+	writeJSON(w, 200, currentUser(r))
 }
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {

@@ -21,7 +21,7 @@ const item = (a) => {
         <span class="list-item__title">${esc(a.number)} · ${esc(appSummary(a, product(a.product_id)))}</span>
         <span class="list-item__meta ${t.need && !FINAL.includes(a.status) ? 'is-need' : ''}">${esc(t.title)}</span>
       </div>
-      <div class="list-item__side">${statusBadge(a.status)}<span class="xsmall muted">${dateTime(a.updated_at)}</span></div>
+      <div class="list-item__side">${statusBadge(a.status, a)}<span class="xsmall muted">${dateTime(a.updated_at)}</span></div>
     </a>`;
 };
 

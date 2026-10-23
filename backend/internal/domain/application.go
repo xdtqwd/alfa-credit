@@ -31,8 +31,10 @@ const (
 	StatusSubmitted    Status = "submitted"     // отправлена, ждёт обработки
 	StatusDataCheck    Status = "data_check"    // проверка данных: ЕГРЮЛ/ЕГРИП, БКИ, сверка выручки
 	StatusScoring      Status = "scoring"       // оценка риска и кредитное решение
-	StatusApproved     Status = "approved"      // одобрено на запрошенных условиях
-	StatusCounterOffer Status = "counter_offer" // одобрено на иных условиях
+	StatusApproved     Status = "approved"      // одобрено на запрошенных условиях (предварительно или окончательно — Decision.Final)
+	StatusCounterOffer Status = "counter_offer" // одобрено на иных условиях (предварительно)
+	StatusFullForm     Status = "full_form"     // предварительные условия приняты, клиент заполняет полную анкету
+	StatusVerification Status = "verification"  // банк проверяет полную анкету и обеспечение → окончательное решение
 	StatusNeedInfo     Status = "need_info"     // нужно уточнить данные
 	StatusRejected     Status = "rejected"      // отказ
 	StatusSigning      Status = "signing"       // клиент принял условия, подписание документов
@@ -46,9 +48,11 @@ var transitions = map[Status][]Status{
 	StatusSubmitted:    {StatusDataCheck, StatusCancelled},
 	StatusDataCheck:    {StatusScoring, StatusNeedInfo, StatusRejected},
 	StatusScoring:      {StatusApproved, StatusCounterOffer, StatusNeedInfo, StatusRejected},
-	StatusApproved:     {StatusSigning, StatusCancelled},
-	StatusCounterOffer: {StatusSigning, StatusCancelled},
-	StatusNeedInfo:     {StatusSubmitted, StatusCancelled},
+	StatusApproved:     {StatusFullForm, StatusSigning, StatusCancelled},
+	StatusCounterOffer: {StatusFullForm, StatusSigning, StatusCancelled},
+	StatusFullForm:     {StatusVerification, StatusCancelled},
+	StatusVerification: {StatusApproved, StatusNeedInfo},
+	StatusNeedInfo:     {StatusSubmitted, StatusVerification, StatusCancelled},
 	StatusSigning:      {StatusIssued, StatusCancelled},
 	StatusIssued:       {StatusClosed},
 }
@@ -67,12 +71,9 @@ func CanTransition(from, to Status) bool {
 	return slices.Contains(transitions[from], to)
 }
 
-// Editable — можно ли клиенту править анкету в этом статусе.
-func (s Status) Editable() bool { return s == StatusDraft || s == StatusNeedInfo }
-
 // InPipeline — заявка обрабатывается банком автоматически.
 func (s Status) InPipeline() bool {
-	return s == StatusSubmitted || s == StatusDataCheck || s == StatusScoring
+	return s == StatusSubmitted || s == StatusDataCheck || s == StatusScoring || s == StatusVerification
 }
 
 type Company struct {
@@ -141,6 +142,8 @@ type Decision struct {
 	Reasons []string `json:"reasons"`
 	// Advice — что можно сделать дальше (для отказа и уточнения).
 	Advice []string `json:"advice,omitempty"`
+	// Final — окончательное решение. false — предварительное (по быстрой анкете), дальше полная анкета.
+	Final bool `json:"final"`
 }
 
 // SetOffer заполняет условия решения из единого расчёта.
@@ -164,26 +167,31 @@ type Event struct {
 }
 
 type Application struct {
-	ID         string        `json:"id"`
-	Number     string        `json:"number"`
-	ClientID   string        `json:"-"`
-	ProductID  string        `json:"product_id"`
-	Amount     int64         `json:"amount"`
-	TermMonths int           `json:"term_months"`
-	Purpose    string        `json:"purpose"`
-	INN        string        `json:"inn"`
-	Company    *Company      `json:"company,omitempty"`
-	Financials Financials    `json:"financials"`
-	Contact    Contact       `json:"contact"`
-	Consent    bool          `json:"consent"`
-	Status     Status        `json:"status"`
-	Bureau     *BureauReport `json:"bureau,omitempty"`
-	Checks     []Check       `json:"checks"`
-	Score      *int          `json:"score,omitempty"`
-	Factors    []ScoreFactor `json:"factors,omitempty"` // из чего сложился балл — для клиента и банка
-	Decision   *Decision     `json:"decision,omitempty"`
-	History    []Event       `json:"history"`
-	Payments   []Payment     `json:"payments"`
+	ID         string     `json:"id"`
+	Number     string     `json:"number"`
+	ClientID   string     `json:"-"`
+	ProductID  string     `json:"product_id"`
+	Amount     int64      `json:"amount"`
+	TermMonths int        `json:"term_months"`
+	Purpose    string     `json:"purpose"`
+	INN        string     `json:"inn"`
+	Company    *Company   `json:"company,omitempty"`
+	Financials Financials `json:"financials"`
+	Contact    Contact    `json:"contact"`
+	Consent    bool       `json:"consent"`
+	// Level — уровень анкеты: 1 — быстрая (0 у заявок, созданных до двух уровней), 2 — полная.
+	Level int       `json:"level"`
+	Full  *FullForm `json:"full_form,omitempty"`
+	// Preliminary — предварительное решение, которое клиент принял перед полной анкетой.
+	Preliminary *Decision     `json:"preliminary,omitempty"`
+	Status      Status        `json:"status"`
+	Bureau      *BureauReport `json:"bureau,omitempty"`
+	Checks      []Check       `json:"checks"`
+	Score       *int          `json:"score,omitempty"`
+	Factors     []ScoreFactor `json:"factors,omitempty"` // из чего сложился балл — для клиента и банка
+	Decision    *Decision     `json:"decision,omitempty"`
+	History     []Event       `json:"history"`
+	Payments    []Payment     `json:"payments"`
 	// Вычисляемые поля (Enrich) — считаются на сервере, клиент их только показывает.
 	Quote           *Quote        `json:"quote,omitempty"`
 	Schedule        []Installment `json:"schedule,omitempty"`
@@ -241,10 +249,27 @@ type DraftPatch struct {
 	Financials *Financials `json:"financials"`
 	Contact    *Contact    `json:"contact"`
 	Consent    *bool       `json:"consent"`
+	FullForm   *FullForm   `json:"full_form"` // уровень 2 — только он и правится после предварительного решения
 }
 
 func (a *Application) ApplyPatch(p DraftPatch, now time.Time) error {
-	if !a.Status.Editable() {
+	if a.EditableFull() {
+		// условия уже предварительно согласованы: на втором уровне меняется только полная анкета
+		if p.ProductID != nil || p.Amount != nil || p.TermMonths != nil || p.Purpose != nil || p.INN != nil ||
+			p.Financials != nil || p.Contact != nil || p.Consent != nil {
+			return &ValidationError{"full_form", "сумма, срок и быстрая анкета уже согласованы — меняется только полная анкета"}
+		}
+		if p.FullForm != nil {
+			f := *p.FullForm
+			if err := validFullForm(&f); err != nil {
+				return err
+			}
+			a.Full = &f
+		}
+		a.UpdatedAt = now
+		return nil
+	}
+	if !a.EditableQuick() || p.FullForm != nil {
 		return ErrInvalidTransition
 	}
 	if p.ProductID != nil {

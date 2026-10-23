@@ -43,6 +43,21 @@ paths:
       summary: Каталог кредитных продуктов
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Product' } } } } }
+  /api/v1/security-rules:
+    get:
+      tags: [catalog]
+      summary: Правила обеспечения для полной анкеты — с какой суммы нужен залог или поручитель, виды залога и дисконты
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  required_from: { type: integer, example: 5000000 }
+                  kinds: { type: array, items: { type: object, properties: { type: { type: string }, name: { type: string }, discount: { type: number } } } }
+                  premises: { type: array, items: { type: object, properties: { type: { type: string }, name: { type: string } } } }
   /api/v1/scoring/scale:
     get:
       tags: [catalog]
@@ -121,7 +136,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
       tags: [applications]
-      summary: Отправить в конвейер (draft|need_info → submitted)
+      summary: 'Отправить: быстрая анкета (draft|need_info → submitted) или полная (full_form|need_info → verification)'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
@@ -132,7 +147,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
       tags: [applications]
-      summary: Принять одобрение/контрпредложение (→ signing)
+      summary: 'Принять решение: предварительное → full_form (открывается полная анкета), окончательное → signing'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
@@ -182,14 +197,14 @@ paths:
   /api/v1/me:
     get:
       tags: [auth]
-      summary: Профиль, компания, реквизиты и баланс расчётного счёта
+      summary: Профиль — клиента (компания, реквизиты, баланс) или сотрудника банка (служебная карточка и права)
       security: [{ client: [] }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '401': { $ref: '#/components/responses/Error' }
     patch:
       tags: [auth]
-      summary: Изменить почту или должность
+      summary: Изменить почту или должность (сотруднику банка должность менять нельзя — 422)
       security: [{ client: [] }]
       requestBody: { content: { application/json: { schema: { type: object, properties: { email: { type: string }, position: { type: string } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } } }
@@ -209,7 +224,8 @@ paths:
     get:
       tags: [bank]
       summary: Заявки конвейера (кабинет сотрудника) — поиск, фильтр, страницы
-      security: [{ bank: [] }]
+      description: 'Сессия сотрудника банка (роль employee, право applications.view) или служебный X-Bank-Token. Клиенту — 403.'
+      security: [{ client: [] }, { bank: [] }]
       parameters:
         - { name: q, in: query, description: 'номер заявки, ИНН или название компании', schema: { type: string, maxLength: 100 } }
         - $ref: '#/components/parameters/Status'
@@ -221,12 +237,14 @@ paths:
           headers: { X-Total-Count: { $ref: '#/components/headers/TotalCount' }, Link: { $ref: '#/components/headers/Link' } }
           content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Application' } } } }
         '401': { $ref: '#/components/responses/Error' }
+        '403': { description: 'Вошёл клиент или у сотрудника нет права', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /api/v1/bank/applications/{id}/audit:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     get:
       tags: [bank]
       summary: Журнал аудита по заявке (режим PostgreSQL)
-      security: [{ bank: [] }]
+      description: 'Право audit.view.'
+      security: [{ client: [] }, { bank: [] }]
       responses:
         '200':
           description: OK
@@ -250,7 +268,8 @@ paths:
     get:
       tags: [bank]
       summary: Состояние платформы — хранилище, шина событий, очередь outbox, кэши
-      security: [{ bank: [] }]
+      description: 'Право platform.view.'
+      security: [{ client: [] }, { bank: [] }]
       responses:
         '200':
           description: OK
@@ -291,6 +310,7 @@ components:
       type: object
       properties:
         id: { type: string }
+        role: { type: string, enum: [client, employee], description: 'client — представитель бизнеса, employee — сотрудник банка' }
         phone: { type: string }
         full_name: { type: string }
         position: { type: string }
@@ -300,6 +320,14 @@ components:
           type: object
           properties: { account: { type: string }, bank_name: { type: string }, bik: { type: string }, corr_account: { type: string }, kpp: { type: string } }
         balance: { type: integer, description: 'остаток на расчётном счёте, ₽' }
+        employee:
+          type: object
+          description: 'только у сотрудника банка'
+          properties:
+            personnel_no: { type: string, description: табельный номер }
+            department: { type: string }
+            branch: { type: string }
+            permissions: { type: array, items: { type: string, enum: [applications.view, audit.view, platform.view] } }
         created_at: { type: string, format: date-time }
         last_login_at: { type: string, format: date-time }
     Error:
@@ -314,7 +342,11 @@ components:
             request_id: { type: string, description: 'совпадает с X-Request-ID — по нему находятся все логи запроса' }
     Status:
       type: string
-      enum: [draft, submitted, data_check, scoring, approved, counter_offer, need_info, rejected, signing, issued, closed, cancelled]
+      description: |
+        Двухуровневая анкета: draft → submitted → data_check → scoring → approved|counter_offer (предварительно, decision.final=false)
+        → full_form (клиент заполняет полную анкету) → verification → approved (decision.final=true) | need_info → signing → issued.
+        Овердрафт (product.express) — одноуровневый: решение по быстрой анкете сразу окончательное.
+      enum: [draft, submitted, data_check, scoring, approved, counter_offer, full_form, verification, need_info, rejected, signing, issued, closed, cancelled]
     Product:
       type: object
       properties:
@@ -331,6 +363,7 @@ components:
         default_payment: { type: integer, description: 'платёж при сумме и сроке по умолчанию (считает сервер)' }
         purposes: { type: array, items: { type: string } }
         badge: { type: string }
+        express: { type: boolean, description: 'одноуровневый продукт: без полной анкеты' }
     CreateInput:
       type: object
       required: [product_id]
@@ -389,10 +422,27 @@ components:
         financials: { $ref: '#/components/schemas/Financials' }
         contact: { $ref: '#/components/schemas/Contact' }
         consent: { type: boolean }
+        full_form: { $ref: '#/components/schemas/FullForm' }
+      description: 'До предварительного решения правится быстрая анкета; после — только full_form (иначе 422).'
+    FullForm:
+      type: object
+      description: Полная анкета (уровень 2) — открывается после принятия предварительных условий
+      properties:
+        employees: { type: integer, description: 'сотрудников, включая руководителя' }
+        premises: { type: string, enum: [own, rent, none] }
+        purpose_details: { type: string, description: 'на что пойдут деньги, от 20 символов' }
+        collateral:
+          type: object
+          properties:
+            type: { type: string, enum: [none, realty, vehicle, equipment, deposit] }
+            value: { type: integer, description: 'оценочная стоимость, ₽' }
+            description: { type: string }
+        guarantor: { type: object, properties: { full_name: { type: string }, inn: { type: string, description: 'ИНН физлица, 12 цифр' } } }
+        statements_consent: { type: boolean, description: 'согласие на запрос выписок и отчётности' }
     Check:
       type: object
       properties:
-        code: { type: string, enum: [registry, bki, revenue, scoring] }
+        code: { type: string, enum: [registry, bki, revenue, scoring, full_form, collateral, guarantor] }
         name: { type: string }
         result: { type: string, enum: [ok, warn, fail] }
         details: { type: string }
@@ -409,6 +459,7 @@ components:
         requested: { $ref: '#/components/schemas/Quote' }
         reasons: { type: array, items: { type: string }, description: 'объяснение простыми словами на данных анкеты' }
         advice: { type: array, items: { type: string }, description: 'что можно сделать (отказ, уточнение)' }
+        final: { type: boolean, description: 'false — предварительное решение по быстрой анкете, дальше полная анкета' }
     Installment:
       type: object
       properties: { n: { type: integer }, payment: { type: integer }, principal: { type: integer }, interest: { type: integer }, rest: { type: integer } }
@@ -433,6 +484,9 @@ components:
         financials: { $ref: '#/components/schemas/Financials' }
         contact: { $ref: '#/components/schemas/Contact' }
         consent: { type: boolean }
+        level: { type: integer, enum: [1, 2], description: 'уровень анкеты: 1 — быстрая, 2 — полная' }
+        full_form: { $ref: '#/components/schemas/FullForm' }
+        preliminary: { $ref: '#/components/schemas/Decision' }
         status: { $ref: '#/components/schemas/Status' }
         bureau:
           type: object

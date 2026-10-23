@@ -89,6 +89,24 @@ const top = async (page) => {
   await shot(page, 'progress');
   await page.waitForSelector('#decision.decision--ok', { timeout: 30000 });
   await top(page);
+  await shot(page, 'preliminary');
+  // уровень 2: полная анкета → окончательное решение
+  await page.click('#todo [data-action=accept]');
+  await page.waitForSelector('#ff-employees');
+  await page.fill('#ff-employees', '25');
+  await page.click('[data-premises=rent]');
+  await page.fill('#ff-purpose', 'Открытие второго магазина и закупка торгового оборудования');
+  await page.click('[data-collateral=equipment]');
+  await page.fill('#ff-coll-value', '4000000');
+  await page.check('#ff-consent');
+  await sleep(1500);
+  await top(page);
+  await shot(page, 'full-form');
+  await page.click('#submit');
+  await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
+    timeout: 30000,
+  });
+  await top(page);
   await shot(page, 'approved');
   await page.click('#todo [data-action=accept]');
   await page.check('#sign-ok');
@@ -133,11 +151,21 @@ const top = async (page) => {
   await submit(page);
   await page.waitForSelector('#decision.decision--bad', { timeout: 30000 });
   await shotOf(page, 'reject', '#decision');
-  await page.goto(BASE + '/#/bank');
+  await ctx.close();
+}
+// кабинет банка: сотрудник входит своей учётной записью
+{
+  const { ctx, page } = await session();
+  await page.goto(BASE + '/#/');
+  await page.click('[data-header=login]');
+  await page.click('[data-demo="79000000005"]');
   await page.waitForSelector('#bank-table table');
   await sleep(2500);
   await shot(page, 'bank');
   await shot(page, 'bank-platform', { clip: { x: 0, y: 70, width: 1440, height: 330 } });
+  await page.goto(BASE + '/#/bank/profile');
+  await page.waitForSelector('.staff-queue');
+  await shot(page, 'staff-profile', { fullPage: true });
   await ctx.close();
 }
 

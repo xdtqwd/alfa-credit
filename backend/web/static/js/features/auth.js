@@ -2,7 +2,8 @@
 import { api } from '../core/api.js';
 import { $, $$, debounce } from '../core/dom.js';
 import { esc, phone, digits } from '../core/format.js';
-import { session, signIn, signOut, refresh } from '../core/session.js';
+import { navigate } from '../core/router.js';
+import { session, signIn, signOut, refresh, isStaff } from '../core/session.js';
 import { openModal, toast } from '../ui/feedback.js';
 import { icon, logoSign } from '../ui/icons.js';
 
@@ -13,6 +14,11 @@ const DEMO_ACCOUNTS = [
   ['79000000003', 'ООО «Сибирский кран»', 'отказ: просрочки'],
   ['79000000004', 'ООО «Закрытый горизонт»', 'отказ: ликвидирована'],
 ];
+// Сотрудник банка — последним: другой кабинет, другая роль.
+const DEMO_STAFF = ['79000000005', 'Соколова Анна Дмитриевна', 'кредитный аналитик · кабинет банка'];
+
+const demoItem = ([ph, name, hint], cls = '') => `
+      <button type="button" class="demo__item ${cls}" data-demo="${ph}"><b>${esc(name)}</b><small>${phone(ph)} · ${esc(hint)}</small></button>`;
 
 const loginForm = () => `
   <form id="auth-form" class="stack" novalidate>
@@ -25,10 +31,9 @@ const loginForm = () => `
   </form>
   <div class="demo">
     <p class="small muted">Демо-аккаунты, пароль <code>${DEMO_PASSWORD}</code></p>
-    ${DEMO_ACCOUNTS.map(
-      ([ph, name, hint]) => `
-      <button type="button" class="demo__item" data-demo="${ph}"><b>${esc(name)}</b><small>${phone(ph)} · ${esc(hint)}</small></button>`,
-    ).join('')}
+    ${DEMO_ACCOUNTS.map((a) => demoItem(a)).join('')}
+    <p class="small muted demo__group">Сотрудник банка</p>
+    ${demoItem(DEMO_STAFF, 'demo__item--staff')}
   </div>`;
 
 const registerForm = () => `
@@ -48,7 +53,9 @@ const registerForm = () => `
   </form>`;
 
 /**
- * Окно входа. Возвращает пользователя после успешного входа или null, если окно закрыли.
+ * Окно входа. Возвращает клиента после успешного входа или null, если окно закрыли.
+ * Сотрудник банка сразу уходит в кабинет банка — продолжать клиентское действие
+ * (оформить, подписать) за него нечего, поэтому для вызывающего это тоже null.
  * reason — зачем нужен вход (показывается сверху).
  */
 export function openAuth({ reason = '', tab = 'login' } = {}) {
@@ -133,6 +140,11 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
           done = true;
           close();
           toast(t === 'login' ? `Здравствуйте, ${user.full_name.split(' ')[1] || user.full_name}` : 'Кабинет создан');
+          if (isStaff(user)) {
+            resolve(null);
+            navigate('/bank');
+            return;
+          }
           resolve(user);
         } catch (ex) {
           err.textContent = ex.message;
@@ -158,6 +170,10 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
 
 /** Гарантирует вход: если клиент не вошёл — показывает окно входа. true — можно продолжать. */
 export async function requireAuth(reason) {
+  if (isStaff()) {
+    toast('Кредит оформляет представитель компании — вы вошли как сотрудник банка', { error: true });
+    return false;
+  }
   if (session.me) return true;
   return !!(await openAuth({ reason }));
 }

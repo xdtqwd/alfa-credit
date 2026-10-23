@@ -40,7 +40,7 @@ function nowCard(apps) {
         return `<a class="list-item" href="#${appPath(a)}">
         <div class="list-item__main"><span class="list-item__title">${esc(a.number)} · ${esc(product(a.product_id)?.name)}</span>
           <span class="list-item__meta ${t.need ? 'is-need' : ''}">${esc(t.title)}</span></div>
-        ${statusBadge(a.status)}</a>`;
+        ${statusBadge(a.status, a)}</a>`;
       })
       .join('')}
     ${

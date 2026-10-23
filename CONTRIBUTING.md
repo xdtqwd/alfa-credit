@@ -42,7 +42,7 @@ git switch main && git pull && git branch -d feature/short-name
 | **Go** | `go mod verify`, `gofmt`, `go vet`, все тесты с race-детектором на настоящих PostgreSQL 16 и Kafka, гонки при оплате и идемпотентности ×20 |
 | **Фронтенд** | ESLint, Prettier (`.prettierrc.json`), проверка необъявленных CSS-переменных и классов со словом `default`, юнит-тесты чистых модулей (`tests/unit`): `cd tests/lint && npm ci && npm run lint`, автоформат — `npm run format:fix` |
 | **Название PR** | название PR и все коммиты ветки — в формате Conventional Commits |
-| **Полный стек** | `docker compose up --build` (api, worker, PostgreSQL, Kafka), 26 браузерных e2e, сквозная самопроверка `/selfcheck`, отказ Kafka и восстановление без потери заявок |
+| **Полный стек** | `docker compose up --build` (api, worker, PostgreSQL, Kafka), 28 браузерных e2e, сквозная самопроверка `/selfcheck`, отказ Kafka и восстановление без потери заявок |
 
 При падении в артефактах сборки лежат логи всех контейнеров и скриншоты упавших e2e.
 

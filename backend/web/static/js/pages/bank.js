@@ -1,8 +1,11 @@
 // Кабинет сотрудника банка: все заявки конвейера в реальном времени и состояние платформы.
+// Доступ — по сессии сотрудника банка (вход по телефону и паролю) или по служебному токену BANK_TOKEN.
 import { api } from '../core/api.js';
-import { $, every, storage } from '../core/dom.js';
+import { $, every, on, storage } from '../core/dom.js';
 import { esc, rub, months, rate, dateTime } from '../core/format.js';
-import { product } from '../core/session.js';
+import { product, session, isStaff } from '../core/session.js';
+import { openAuth, logout } from '../features/auth.js';
+import { icon } from '../ui/icons.js';
 import { IN_PIPELINE, DECIDED, statusBadge } from '../domain.js';
 import { pageHead } from './parts.js';
 
@@ -23,7 +26,7 @@ function kpis(rows) {
   const items = [
     ['Всего заявок', rows.length],
     ['В конвейере', count(IN_PIPELINE)],
-    ['Одобрено / выдано', count(['approved', 'counter_offer', 'signing', 'issued'])],
+    ['Одобрено / выдано', count(['approved', 'counter_offer', 'full_form', 'signing', 'issued'])],
     ['Отказ', count(['rejected'])],
     ['Средний балл', avgScore],
     ['Время до решения', avgTime],
@@ -61,7 +64,7 @@ function table(rows) {
       <td>${r.company ? `${esc(r.company.name)}<div class="xsmall muted">ИНН ${esc(r.inn)}</div>` : '—'}</td>
       <td>${esc(product(r.product_id)?.name)}</td>
       <td class="num nowrap">${rub(r.amount)}<div class="xsmall muted">${months(r.term_months)}</div></td>
-      <td>${statusBadge(r.status)}</td>
+      <td>${statusBadge(r.status, r)}</td>
       <td class="num">${r.score ?? '—'}</td>
       <td class="small">${r.decision ? `${r.decision.amount ? `${rub(r.decision.amount)} · ${rate(r.decision.rate)}` : ''}<div class="muted">${esc(r.decision.reasons?.[0] || '')}</div>` : '—'}</td>
       <td>${checkDots(r.checks)}</td>
@@ -71,10 +74,38 @@ function table(rows) {
       .join('')}</tbody></table></div>`;
 }
 
-/** Вход сотрудника: токен кабинета банка. В демо-режиме подходит demo-bank, в production — секрет из BANK_TOKEN. */
+/** Гость: кабинет банка — для сотрудников. Основной вход — учётная запись сотрудника, запасной — служебный токен. */
+function gate(root, signal, { client = false } = {}) {
+  root.innerHTML = `<div class="container"><section class="card empty bank-gate">
+    <span class="bank-gate__icon">${icon('briefcase', 28)}</span>
+    <h1>Кабинет банка — для сотрудников</h1>
+    <p>${
+      client
+        ? 'Вы вошли как представитель компании. Очередь заявок, решения и состояние платформы видят только сотрудники банка.'
+        : 'Очередь заявок, решения и состояние платформы. Войдите учётной записью сотрудника банка.'
+    }</p>
+    <div class="row row--wrap bank-gate__actions">
+      <button class="btn btn--primary" data-bank-login>${icon('lock', 20)} ${client ? 'Выйти и войти как сотрудник' : 'Войти как сотрудник'}</button>
+      <button class="btn btn--ghost" data-bank-token>Служебный токен</button>
+    </div>
+  </section></div>`;
+  on(
+    root,
+    'click',
+    '[data-bank-login]',
+    async () => {
+      if (client) await logout();
+      openAuth({ reason: 'Кабинет банка открывается учётной записью сотрудника банка.' }); // сотрудник после входа попадёт сюда же
+    },
+    signal,
+  );
+  on(root, 'click', '[data-bank-token]', () => askToken(root, signal, false), signal);
+}
+
+/** Служебный токен (BANK_TOKEN): для интеграций и проверки без учётной записи. В демо-режиме — demo-bank. */
 function askToken(root, signal, rejected) {
   root.innerHTML = `<div class="container">
-    ${pageHead('Кабинет сотрудника банка', 'Доступ по токену сотрудника')}
+    ${pageHead('Кабинет банка', 'Вход по служебному токену')}
     <form class="card stack bank-login" id="bank-login">
       <div class="field"><label for="bank-token">Токен кабинета банка</label>
         <input class="input" id="bank-token" type="password" autocomplete="off" required></div>
@@ -96,10 +127,13 @@ function askToken(root, signal, rejected) {
 
 export default async function bank(root, { signal }) {
   root.className = 'page';
-  const token = storage.get('bank_token', 'demo-bank');
-  const headers = { 'X-Bank-Token': token };
+  const staff = isStaff();
+  const token = staff ? '' : storage.get('bank_token', '');
+  if (!staff && !token) return gate(root, signal, { client: !!session.me });
+  const headers = token ? { 'X-Bank-Token': token } : undefined; // сотруднику хватает cookie сессии
+  const who = staff ? `${esc(session.me.full_name)} · ${esc(session.me.position)}` : 'Вход по служебному токену';
   root.innerHTML = `<div class="container">
-    ${pageHead('Кабинет сотрудника банка', 'Все заявки конвейера в реальном времени · обновление каждые 2 секунды', '<span class="status status--ok">Live</span>')}
+    ${pageHead('Очередь заявок', `${who} · обновление каждые 2 секунды`, '<span class="status status--ok">Live</span>')}
     <div id="bank-platform"></div>
     <div id="bank-kpis"></div>
     <section class="card" id="bank-table"><div class="skeleton"></div></section>
@@ -118,8 +152,9 @@ export default async function bank(root, { signal }) {
   try {
     await load();
   } catch (e) {
-    if (e.status !== 401) throw e;
-    return askToken(root, signal, token !== 'demo-bank');
+    if (staff || e.status !== 401) throw e;
+    storage.set('bank_token', '');
+    return askToken(root, signal, true);
   }
   every(2000, () => load().catch(() => {}), signal);
 }

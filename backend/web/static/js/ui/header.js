@@ -1,13 +1,14 @@
 // Шапка: одна для всего сайта, два режима.
 //   site    — разделы продуктовой страницы и «Услуги для бизнеса», справа «Войти» или аватар;
-//   cabinet — вкладки кабинета «Профиль · Заявки · Кредиты · Сообщения», справа «Новый кредит» и аватар.
+//   cabinet — вкладки кабинета «Профиль · Заявки · Кредиты · Сообщения», справа «Новый кредит» и аватар;
+//             у сотрудника банка — «Очередь заявок · Профиль», без «Нового кредита».
 // «Услуги для бизнеса» — мега-меню как на alfabank.ru: панель во всю ширину, слева заголовок и ссылка
 // на все услуги, справа колонки ссылок. Открывается наведением (и фокусом с клавиатуры) на чистом CSS.
 // Только для компьютера — в меню-бургере телефона его нет.
 // Меню профиля открывается по клику и закрывается кликом мимо, Esc или переходом.
 import { esc, initials } from '../core/format.js';
 import { currentPath, navigate } from '../core/router.js';
-import { session, unreadCount } from '../core/session.js';
+import { session, unreadCount, isStaff } from '../core/session.js';
 import { openAuth, logout } from '../features/auth.js';
 import { copy, requisitesText, startApplication } from '../features/loan.js';
 import { icon, logoSign } from './icons.js';
@@ -62,6 +63,10 @@ const CABINET_TABS = [
   ['credits', '/cabinet/credits', 'Кредиты'],
   ['messages', '/cabinet/messages', 'Сообщения'],
 ];
+const STAFF_TABS = [
+  ['queue', '/bank', 'Очередь заявок'],
+  ['profile', '/bank/profile', 'Профиль'],
+];
 
 let el = null;
 let view = { area: 'site', tab: '', platinum: false };
@@ -72,7 +77,12 @@ function model() {
   const me = session.me;
   return {
     ...view,
-    me: me && { name: me.full_name, position: me.position, company: me.company.name, inn: me.company.inn },
+    staff: isStaff(),
+    me: me && {
+      name: me.full_name,
+      position: me.position,
+      line: isStaff() ? me.employee?.department || 'Сотрудник банка' : `${me.company.name} · ИНН ${me.company.inn}`,
+    },
     unread: unreadCount(),
     menuOpen,
   };
@@ -80,10 +90,12 @@ function model() {
 
 function navHtml(m) {
   if (m.area === 'cabinet') {
-    return CABINET_TABS.map(
-      ([key, href, label]) => `
+    return (m.staff ? STAFF_TABS : CABINET_TABS)
+      .map(
+        ([key, href, label]) => `
       <a class="nav__link ${m.tab === key ? 'is-active' : ''}" href="#${href}" ${m.tab === key ? 'aria-current="page"' : ''}>${label}${key === 'messages' && m.unread ? `<span class="nav__badge">${m.unread}</span>` : ''}</a>`,
-    ).join('');
+      )
+      .join('');
   }
   return `${SITE_LINKS.map(([id, label]) => `<a class="nav__link" href="#/" data-section="${id}">${label}</a>`).join('')}
     <div class="nav__dd">
@@ -112,17 +124,21 @@ function servicesHtml() {
   </div>`;
 }
 
-function menuHtml(me) {
+function menuHtml(me, staff) {
+  const items = staff
+    ? `<a class="menu__item" href="#/bank" role="menuitem">${icon('list', 20)} Очередь заявок</a>
+      <a class="menu__item" href="#/bank/profile" role="menuitem">${icon('briefcase', 20)} Профиль сотрудника</a>`
+    : `<a class="menu__item" href="#/cabinet/applications" role="menuitem">${icon('doc', 20)} Заявки</a>
+      <a class="menu__item" href="#/cabinet/credits" role="menuitem">${icon('wallet', 20)} Кредиты</a>
+      <button class="menu__item" data-header="copy-requisites" role="menuitem">${icon('copy', 20)} Скопировать реквизиты</button>`;
   return `
     <div class="menu" role="menu">
-      <a class="menu__head" href="#/cabinet" role="menuitem" title="Профиль и реквизиты">
-        <span class="avatar avatar--l">${esc(initials(me.name))}</span>
-        <span><b>${esc(me.name)}</b><small>${esc(me.position)}</small><small>${esc(me.company)} · ИНН ${esc(me.inn)}</small></span>
+      <a class="menu__head" href="#${staff ? '/bank/profile' : '/cabinet'}" role="menuitem" title="${staff ? 'Профиль сотрудника' : 'Профиль и реквизиты'}">
+        <span class="avatar avatar--l${staff ? ' avatar--staff' : ''}">${esc(initials(me.name))}</span>
+        <span><b>${esc(me.name)}</b><small>${esc(me.position)}</small><small>${esc(me.line)}</small></span>
       </a>
       <div class="menu__sep"></div>
-      <a class="menu__item" href="#/cabinet/applications" role="menuitem">${icon('doc', 20)} Заявки</a>
-      <a class="menu__item" href="#/cabinet/credits" role="menuitem">${icon('wallet', 20)} Кредиты</a>
-      <button class="menu__item" data-header="copy-requisites" role="menuitem">${icon('copy', 20)} Скопировать реквизиты</button>
+      ${items}
       <div class="menu__sep"></div>
       <button class="menu__item" data-header="logout" role="menuitem">${icon('out', 20)} Выйти</button>
     </div>`;
@@ -131,12 +147,12 @@ function menuHtml(me) {
 function rightHtml(m) {
   if (!m.me) return `<button class="btn btn--primary btn--sm" data-header="login">Войти</button>`;
   return `
-    ${m.area === 'cabinet' ? `<button class="btn btn--primary btn--sm" data-header="new-loan">${icon('plus', 20)}<span class="hide-s">Новый кредит</span></button>` : ''}
+    ${m.area === 'cabinet' && !m.staff ? `<button class="btn btn--primary btn--sm" data-header="new-loan">${icon('plus', 20)}<span class="hide-s">Новый кредит</span></button>` : ''}
     <div class="menu-wrap">
       <button class="avatar-btn" data-header="menu" aria-haspopup="menu" aria-expanded="${m.menuOpen}" aria-label="Меню профиля">
-        <span class="avatar">${esc(initials(m.me.name))}</span>
+        <span class="avatar${m.staff ? ' avatar--staff' : ''}">${esc(initials(m.me.name))}</span>
       </button>
-      ${m.menuOpen ? menuHtml(m.me) : ''}
+      ${m.menuOpen ? menuHtml(m.me, m.staff) : ''}
     </div>`;
 }
 
@@ -152,7 +168,7 @@ export function renderHeader(next = {}) {
   el.innerHTML = `
     <div class="container header__in">
       <a class="logo" href="#/" aria-label="Альфа Бизнес — на главную">${logoSign()}</a>
-      <nav class="nav" aria-label="${m.area === 'cabinet' ? 'Разделы кабинета' : 'Разделы страницы'}">${navHtml(m)}</nav>
+      <nav class="nav" aria-label="${m.area === 'cabinet' ? (m.staff ? 'Разделы кабинета банка' : 'Разделы кабинета') : 'Разделы страницы'}">${navHtml(m)}</nav>
       <div class="header__right">
         ${rightHtml(m)}
         ${m.area === 'site' ? `<button class="header__burger" data-header="burger" aria-label="Разделы">${icon('menu', 24)}</button>` : ''}

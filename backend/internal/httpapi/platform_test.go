@@ -29,7 +29,7 @@ func (h *harness) issued(c *http.Client) string {
 		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusApproved} {
 			_ = x.Transition(s, "test", "", time.Now())
 		}
-		d := domain.Decision{Type: domain.DecisionApproved}
+		d := domain.Decision{Type: domain.DecisionApproved, Final: true}
 		d.SetOffer(domain.NewQuote(300_000, 21.5, 3))
 		x.Decision = &d
 		return nil

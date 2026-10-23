@@ -14,7 +14,7 @@ import {
   maskAccount,
   initials,
 } from '../../backend/web/static/js/core/format.js';
-import { STATUS, STAGE_OF, EDITABLE, IN_PIPELINE, todoFor, appSummary } from '../../backend/web/static/js/domain.js';
+import { STATUS, IN_PIPELINE, todoFor, appSummary, stagesFor, editLevel, statusLabel } from '../../backend/web/static/js/domain.js';
 import { route, redirect, match } from '../../backend/web/static/js/core/router.js';
 
 const nbsp = (s) => s.replace(/ | /g, ' ');
@@ -63,9 +63,26 @@ test('esc экранирует разметку из пользовательс�
 test('у каждого статуса есть подпись и этап прогресса', () => {
   for (const s of Object.keys(STATUS)) {
     assert.ok(STATUS[s][0], `нет подписи статуса ${s}`);
-    if (s !== 'cancelled') assert.ok(Number.isInteger(STAGE_OF[s]), `нет этапа для статуса ${s}`);
+    for (const two of [true, false]) {
+      const { stages, idx } = stagesFor({ status: s, decision: {} }, two);
+      assert.ok(Number.isInteger(idx) && idx >= 0 && idx < stages.length, `нет этапа для статуса ${s} (двухуровневая: ${two})`);
+    }
   }
-  for (const s of [...EDITABLE, ...IN_PIPELINE]) assert.ok(STATUS[s], `неизвестный статус ${s}`);
+  for (const s of IN_PIPELINE) assert.ok(STATUS[s], `неизвестный статус ${s}`);
+});
+
+test('двухуровневая анкета: какой уровень правится и как подписан статус', () => {
+  assert.equal(editLevel({ status: 'draft' }), 1);
+  assert.equal(editLevel({ status: 'need_info', level: 1 }), 1);
+  assert.equal(editLevel({ status: 'full_form', level: 2 }), 2);
+  assert.equal(editLevel({ status: 'need_info', level: 2 }), 2);
+  assert.equal(editLevel({ status: 'verification', level: 2 }), 0);
+  const pre = { status: 'approved', decision: { final: false } };
+  assert.equal(statusLabel('approved', pre), 'Предварительно одобрено');
+  assert.equal(statusLabel('approved', { status: 'approved', decision: { final: true } }), 'Одобрено');
+  assert.equal(stagesFor(pre, true).stages[stagesFor(pre, true).idx], 'Предварительное решение');
+  const fin = { status: 'approved', decision: { final: true } };
+  assert.equal(stagesFor(fin, true).stages[stagesFor(fin, true).idx], 'Окончательное решение');
 });
 
 test('todoFor: главная кнопка заявки — одна и по статусу', () => {
@@ -78,13 +95,15 @@ test('todoFor: главная кнопка заявки — одна и по с�
     payments: [],
     ...extra,
   });
-  assert.deepEqual(todoFor(app('approved')).action, ['accept', 'Принять и подписать']);
+  assert.deepEqual(todoFor(app('approved', { decision: { amount: 3000000, final: true } })).action, ['accept', 'Принять и подписать']);
+  assert.deepEqual(todoFor(app('approved')).action, ['accept', 'Принять и продолжить']); // предварительное → полная анкета
+  assert.equal(todoFor(app('full_form')).action[0], 'fix');
   assert.equal(todoFor(app('counter_offer')).action[0], 'accept');
   assert.equal(todoFor(app('need_info')).action[0], 'fix');
   assert.equal(todoFor(app('need_info')).text, 'Уточните выручку');
   assert.equal(todoFor(app('signing')).action[0], 'sign');
   assert.equal(todoFor(app('issued')).action[0], 'pay');
-  for (const s of ['submitted', 'data_check', 'scoring', 'rejected', 'closed', 'cancelled']) {
+  for (const s of ['submitted', 'data_check', 'scoring', 'verification', 'rejected', 'closed', 'cancelled']) {
     assert.equal(todoFor(app(s)).need, false, `от клиента ничего не нужно на статусе ${s}`);
     assert.equal(todoFor(app(s)).action, undefined);
   }

@@ -4,7 +4,7 @@ import { on, every, storage } from '../core/dom.js';
 import { esc, rub, months, rate, time } from '../core/format.js';
 import { navigate } from '../core/router.js';
 import { product, putApp } from '../core/session.js';
-import { STATUS, STAGES, STAGE_OF, IN_PIPELINE, DOING, todoFor, statusBadge } from '../domain.js';
+import { STATUS, IN_PIPELINE, DOING, todoFor, statusBadge, stagesFor, isPreliminary } from '../domain.js';
 import { toast } from '../ui/feedback.js';
 import { accordion } from '../ui/accordion.js';
 import { icon } from '../ui/icons.js';
@@ -25,8 +25,8 @@ const offer = (d) => `
 // Главная кнопка («Принять», «Подписать», «Оплатить», «Исправить») — одна, в блоке «Что нужно от вас» сверху;
 // в карточке решения остаются только объяснение и «Отказаться».
 
-/** «Вы просили / Банк предлагает / Разница» — все цифры с сервера. */
-function compare(req, off) {
+/** «Вы просили / Банк предлагает / Разница» — все цифры с сервера. heads — подписи колонок. */
+function compare(req, off, heads = ['Вы просили', 'Банк предлагает']) {
   const rows = [
     ['Сумма', 'amount', rub, 'more'],
     ['Срок', 'term_months', months, ''],
@@ -50,7 +50,7 @@ function compare(req, off) {
     return `<span class="${good === null ? '' : good ? 'delta--good' : 'delta--bad'}">${text}</span>`;
   };
   return `<div class="table-wrap"><table class="table compare">
-    <thead><tr><th><span class="sr-only">Параметр</span></th><th>Вы просили</th><th>Банк предлагает</th><th>Разница</th></tr></thead>
+    <thead><tr><th><span class="sr-only">Параметр</span></th><th>${heads[0]}</th><th>${heads[1]}</th><th>Разница</th></tr></thead>
     <tbody>${rows
       .map(
         ([label, key, f, better]) => `
@@ -124,22 +124,42 @@ function decisionCard(a) {
         'Рассматриваем заявку',
         `<p class="muted">Вы запросили ${rub(a.amount)} на ${months(a.term_months)}${a.quote ? ` — ориентировочный платёж ${rub(a.quote.monthly_payment)} в месяц` : ''}. Статус обновится сам.</p>`,
       );
-    case 'approved':
+    case 'verification':
+      return card(
+        'info',
+        'Проверяем полную анкету',
+        `<p class="muted">Предварительно одобрено ${rub(a.amount)} на ${months(a.term_months)}. Сейчас банк проверяет обеспечение${a.full_form?.guarantor ? ' и поручителя' : ''} — окончательное решение придёт сюда же.</p>`,
+      );
+    case 'approved': {
+      if (isPreliminary(a))
+        return card(
+          'ok',
+          'Предварительно одобрено',
+          `${offer(d)}${nextStep()}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
+          <div class="actions">${cancel}</div>`,
+        );
+      // окончательное решение двухуровневой заявки сравниваем с предварительным, одноуровневой — с запросом
+      const heads = a.preliminary ? ['Предварительно', 'Окончательно'] : undefined;
       return card(
         'ok',
-        'Кредит одобрен',
-        `${d.requested && d.requested.rate !== d.rate ? compare(d.requested, d) : offer(d)}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
+        a.preliminary ? 'Кредит одобрен окончательно' : 'Кредит одобрен',
+        `${d.requested && d.requested.rate !== d.rate ? compare(d.requested, d, heads) : offer(d)}${reasons('Почему так', d.reasons)}${a.preliminary ? '' : scoreBlock(a)}
         <div class="actions">${cancel}</div>`,
       );
+    }
     case 'counter_offer':
       return card(
         'warn',
-        'Можем выдать на других условиях',
-        `<p class="muted">Сравните, что вы просили и что предлагает банк:</p>${d.requested ? compare(d.requested, d) : offer(d)}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
+        isPreliminary(a) ? 'Предварительно: можем выдать на других условиях' : 'Можем выдать на других условиях',
+        `<p class="muted">Сравните, что вы просили и что предлагает банк:</p>${d.requested ? compare(d.requested, d) : offer(d)}${isPreliminary(a) ? nextStep() : ''}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
         <div class="actions">${cancel}</div>`,
       );
     case 'need_info':
-      return card('warn', 'Нужно уточнить данные', `${reasons('Почему так', d.reasons)}${reasons('Что сделать', d.advice)}`);
+      return card(
+        'warn',
+        a.level === 2 ? 'Нужно уточнить полную анкету' : 'Нужно уточнить данные',
+        `${reasons('Почему так', d.reasons)}${reasons('Что сделать', d.advice)}`,
+      );
     case 'rejected':
       return card(
         'bad',
@@ -178,6 +198,31 @@ function decisionCard(a) {
   }
 }
 
+/** Что будет после предварительного одобрения. */
+const nextStep = () =>
+  `<div class="note note--box">${icon('info', 20)}<span><b>Решение предварительное.</b> Дальше — полная анкета: о бизнесе, обеспечении и согласие на выписки (3–5 минут). После неё — окончательное решение и подписание.</span></div>`;
+
+const PREMISES = { own: 'Собственное', rent: 'Аренда', none: 'Без помещения' };
+const COLLATERAL = {
+  realty: 'Недвижимость',
+  vehicle: 'Транспорт и спецтехника',
+  equipment: 'Оборудование',
+  deposit: 'Депозит в Альфа-Банке',
+};
+
+/** Что клиент указал в полной анкете — после её отправки. */
+function fullSummary(a) {
+  const f = a.full_form;
+  if (!f || ['full_form'].includes(a.status)) return '';
+  const c = f.collateral || {};
+  return `<section class="card"><h2 class="card__title">Полная анкета</h2><dl class="kv full-summary">
+    <div><dt>Сотрудников</dt><dd>${f.employees}</dd></div>
+    <div><dt>Помещение</dt><dd>${esc(PREMISES[f.premises] || '—')}</dd></div>
+    <div><dt>Залог</dt><dd>${c.type && c.type !== 'none' ? `${esc(COLLATERAL[c.type])}, ${rub(c.value)}` : 'Без залога'}</dd></div>
+    <div><dt>Поручитель</dt><dd>${f.guarantor ? esc(f.guarantor.full_name) : 'Нет'}</dd></div>
+  </dl><p class="note">${icon('doc', 20)}<span>${esc(f.purpose_details)}</span></p></section>`;
+}
+
 function todoNotice(a) {
   const t = todoFor(a);
   if (!t.title) return '';
@@ -191,23 +236,25 @@ function todoNotice(a) {
 function layout(a) {
   const p = product(a.product_id);
   const busy = IN_PIPELINE.includes(a.status);
+  const { stages, idx } = stagesFor(a, p && !p.express);
   const sent = a.history.find((h) => h.status === 'submitted');
   const decided = a.history.find((h) => ['approved', 'counter_offer', 'rejected', 'need_info'].includes(h.status));
   const secs = sent && decided ? Math.round((new Date(decided.at) - new Date(sent.at)) / 1000) : null;
   return `<div class="container stack-l">
     <div>
       ${backLink('/cabinet/applications', 'Все заявки')}
-      ${pageHead(`Заявка ${a.number}`, `${esc(p?.name)} · ${rub(a.amount)} на ${months(a.term_months)}${a.company ? ` · ${esc(a.company.name)}` : ''}`, statusBadge(a.status))}
+      ${pageHead(`Заявка ${a.number}`, `${esc(p?.name)} · ${rub(a.amount)} на ${months(a.term_months)}${a.company ? ` · ${esc(a.company.name)}` : ''}`, statusBadge(a.status, a))}
     </div>
     ${todoNotice(a)}
     <section class="card stepper-box">
-      <div class="card__head"><h2>Прогресс заявки</h2>${secs !== null ? `<span class="small muted">Решение принято за ${secs} с</span>` : ''}</div>
-      ${stepper(a, STAGES, STAGE_OF, busy)}
+      <div class="card__head"><h2>Прогресс заявки</h2>${secs !== null ? `<span class="small muted">${p && !p.express ? 'Предварительное решение' : 'Решение'} — за ${secs} с</span>` : ''}</div>
+      ${stepper(a, stages, { [a.status]: idx }, busy)}
       ${busy ? `<p class="note">${icon('clock', 20)}<span>${DOING[a.status]}</span></p>` : ''}
     </section>
     <div class="app-layout">
       <div class="stack-l">
         ${decisionCard(a)}
+        ${fullSummary(a)}
         ${
           a.checks.length
             ? `<section class="card"><h2 class="card__title">Проверки банка</h2><ul class="checks">${a.checks
@@ -223,7 +270,7 @@ function layout(a) {
         <h2 class="card__title">История</h2>
         <ul class="timeline">${[...a.history]
           .reverse()
-          .map((h) => `<li><time>${time(h.at)}</time><b>${STATUS[h.status][0]}</b><span>${esc(h.comment)}</span></li>`)
+          .map((h) => `<li><time>${time(h.at)}</time><b>${STATUS[h.status]?.[0] || h.status}</b><span>${esc(h.comment)}</span></li>`)
           .join('')}</ul>
       </aside>
     </div>
@@ -267,7 +314,11 @@ export default function applicationStatus(root, initial, { signal }) {
       const action = el.dataset.action;
       try {
         if (action === 'accept') {
-          draw(await api('POST', `/applications/${a.id}/accept`));
+          const next = await api('POST', `/applications/${a.id}/accept`);
+          putApp(next);
+          // предварительное решение → полная анкета; окончательное → подписание
+          if (next.status === 'full_form') return navigate(`/cabinet/applications/${a.id}`);
+          draw(next);
           const signed = await signDialog(a);
           if (signed && !signal.aborted) draw(signed);
         }

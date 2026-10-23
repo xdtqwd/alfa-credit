@@ -1,14 +1,16 @@
-// Анкета заявки: 4 блока и сводка справа. Всё сохраняется автоматически.
-// Индикатор сохранения честный: «Сохраняем…», «Сохранено» или ошибка с повтором; несохранённые
-// поля не теряются и досылаются сами; отправить анкету с несохранёнными правками нельзя.
+// Быстрая анкета (уровень 1): 4 коротких блока и сводка справа → предварительное решение за ~15 секунд.
+// Подробности о бизнесе и обеспечении банк спросит в полной анкете (application-full.js) — только после
+// предварительного одобрения. У одноуровневого продукта (овердрафт) решение по ней сразу окончательное.
+// Всё сохраняется автоматически (features/autosave.js).
 import { api } from '../core/api.js';
-import { $, $$, on, debounce } from '../core/dom.js';
+import { $, $$, on } from '../core/dom.js';
 import { esc, fmt, rub, months, rate, digits, phone } from '../core/format.js';
 import { navigate } from '../core/router.js';
 import { session, product, putApp } from '../core/session.js';
 import { toast } from '../ui/feedback.js';
 import { icon } from '../ui/icons.js';
 import { calcFields, bindCalc, createQuoter } from '../features/calculator.js';
+import { createAutosave } from '../features/autosave.js';
 import { backLink, pageHead } from './parts.js';
 
 const POSITIONS = [
@@ -28,12 +30,26 @@ const checklist = (a) => [
   ['Согласие на запрос в БКИ', a.consent],
 ];
 
+const submitLabel = (p) => (p.express ? 'Отправить на решение' : 'Получить предварительное решение');
+
+/** Два уровня анкеты: где клиент сейчас и что будет дальше. У овердрафта уровень один. */
+export function levels(p, current = 1) {
+  if (p.express) return '';
+  const step = (n, title, text) =>
+    `<li class="levels__item ${n === current ? 'is-current' : n < current ? 'is-done' : ''}"><span class="levels__n">${n < current ? icon('check', 16) : n}</span><div><b>${title}</b><small>${text}</small></div></li>`;
+  return `<ol class="levels" aria-label="Уровни анкеты">
+    ${step(1, 'Быстрая анкета', '2 минуты → предварительное решение')}
+    ${step(2, 'Полная анкета', 'О бизнесе и обеспечении → окончательное решение')}
+  </ol>`;
+}
+
 function layout(a, p) {
   const me = session.me;
   const reasons = a.status === 'need_info' ? a.decision?.reasons || [] : [];
   return `<div class="container">
     ${backLink('/cabinet/applications', 'Все заявки')}
     ${pageHead(`Анкета · ${p.name}`, `Заявка ${esc(a.number)} · всё сохраняется автоматически, можно вернуться позже`)}
+    ${levels(p)}
     ${
       reasons.length
         ? `<div class="notice notice--action notice--block"><span class="notice__ic">${icon('alert', 20)}</span>
@@ -63,15 +79,13 @@ function layout(a, p) {
         </section>
 
         <section class="card fsec" data-sec="2">
-          <div class="fsec__head"><span class="fsec__n">3</span><div><h2>Финансы</h2><p>Три цифры — без выписок и справок</p></div></div>
+          <div class="fsec__head"><span class="fsec__n">3</span><div><h2>Финансы</h2><p>Две цифры — без выписок и справок</p></div></div>
           <div class="fields">
             <div class="field" data-field="financials.annual_revenue"><label for="f-revenue">Выручка за последний год, ₽</label>
               <input class="input" id="f-revenue" inputmode="numeric" data-money="annual_revenue" value="${a.financials.annual_revenue ? fmt(a.financials.annual_revenue) : ''}" placeholder="например, 24 000 000">
               <span class="field__hint" id="f-revenue-hint"></span></div>
             <div class="field"><label for="f-obligations">Платежи по другим кредитам в месяц, ₽</label>
               <input class="input" id="f-obligations" inputmode="numeric" data-money="monthly_obligations" value="${a.financials.monthly_obligations ? fmt(a.financials.monthly_obligations) : ''}" placeholder="0, если нет"></div>
-            <div class="field"><label for="f-employees">Сотрудников</label>
-              <input class="input" id="f-employees" inputmode="numeric" data-money="employees" value="${a.financials.employees || ''}" placeholder="например, 12"></div>
           </div>
         </section>
 
@@ -105,8 +119,8 @@ function layout(a, p) {
           <div class="bar"><i id="sum-progress"></i></div>
           <div class="row row--between small"><span id="sum-pct"></span><span class="save-state" id="save-state" aria-live="polite">Сохранено</span></div>
           <ul class="todo-list" id="sum-todo"></ul>
-          <button class="btn btn--primary btn--block" id="submit">Отправить на решение</button>
-          <p class="calc__note">Решение — примерно через 15 секунд, прямо на этой странице</p>
+          <button class="btn btn--primary btn--block" id="submit">${submitLabel(p)}</button>
+          <p class="calc__note">${p.express ? 'Решение — примерно через 15 секунд, прямо на этой странице' : 'Предварительное решение — примерно через 15 секунд. Подробности о бизнесе спросим, только если одобрим'}</p>
         </section>
       </aside>
     </div>
@@ -119,59 +133,18 @@ export default function applicationForm(root, a, { signal }) {
   root.innerHTML = layout(a, p);
 
   // ---------- автосохранение ----------
-  const queue = {};
-  let saving = false;
-  let saveError = null;
-  let retryTimer = 0;
-  const pending = () => Object.keys(queue).length > 0;
-  signal.addEventListener('abort', () => clearTimeout(retryTimer), { once: true });
-
-  const paintSaveState = () => {
-    const el = $('#save-state', root);
-    const state = saving || (pending() && !saveError) ? 'saving' : saveError ? 'error' : 'ok';
-    el.classList.toggle('is-error', state === 'error');
-    el.innerHTML =
-      state === 'saving'
-        ? 'Сохраняем…'
-        : state === 'error'
-          ? `Не сохранено: ${esc(saveError)} · <button type="button" data-retry>Повторить</button>`
-          : 'Сохранено';
-  };
-
-  async function flush() {
-    clearTimeout(retryTimer);
-    if (!pending() || saving || signal.aborted) return;
-    const patch = { ...queue };
-    Object.keys(queue).forEach((k) => delete queue[k]);
-    saving = true;
-    paintSaveState();
-    try {
-      const fresh = await api('PATCH', `/applications/${id}`, patch);
-      saveError = null;
-      // расчёт с сервера принимаем, только если параметры не успели измениться
+  const autosave = createAutosave({
+    id,
+    root,
+    signal,
+    // расчёт с сервера принимаем, только если параметры не успели измениться
+    onSaved: (fresh) => {
       if (fresh.quote && fresh.amount === a.amount && fresh.term_months === a.term_months && fresh.product_id === a.product_id)
         a.quote = fresh.quote;
-    } catch (e) {
-      // несохранённые поля возвращаются в очередь, не затирая более свежие правки
-      for (const [k, v] of Object.entries(patch)) if (!(k in queue)) queue[k] = v;
-      saveError = e.status === 401 ? 'сессия истекла, войдите снова' : e.message;
-      if (e.status !== 401 && e.status !== 422 && !signal.aborted) retryTimer = setTimeout(flush, 4000);
-    } finally {
-      saving = false;
-      if (!signal.aborted) {
-        paintSaveState();
-        refresh();
-        if (pending() && !saveError) flush();
-      }
-    }
-  }
-  const flushSoon = debounce(flush, 500);
-  signal.addEventListener('abort', () => flushSoon.cancel(), { once: true });
-  const save = (patch) => {
-    Object.assign(queue, patch);
-    paintSaveState();
-    flushSoon();
-  };
+    },
+    onSettled: () => refresh(),
+  });
+  const save = (patch) => autosave.save(patch);
 
   // ---------- сводка ----------
   const paintSummary = () => {
@@ -289,17 +262,6 @@ export default function applicationForm(root, a, { signal }) {
   );
   on(
     root,
-    'click',
-    '[data-retry]',
-    () => {
-      saveError = null;
-      paintSaveState();
-      flush();
-    },
-    signal,
-  );
-  on(
-    root,
     'input',
     '[data-money]',
     (_, el) => {
@@ -344,10 +306,7 @@ export default function applicationForm(root, a, { signal }) {
       btn.textContent = 'Отправляем…';
       try {
         // сначала досохраняем анкету — нельзя отправлять, если правки не дошли до сервера
-        while (saving) await new Promise((r) => setTimeout(r, 100));
-        flushSoon.cancel();
-        await flush();
-        if (saveError) throw new Error(`Анкета не сохранена (${saveError}). Проверьте связь и нажмите «Повторить».`);
+        await autosave.settle();
         await api('PATCH', `/applications/${id}`, {
           product_id: a.product_id,
           amount: a.amount,
@@ -368,7 +327,7 @@ export default function applicationForm(root, a, { signal }) {
           field.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         btn.disabled = false;
-        btn.textContent = 'Отправить на решение';
+        btn.textContent = submitLabel(p);
       }
     },
     signal,

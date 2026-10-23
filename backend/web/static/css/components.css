@@ -374,6 +374,13 @@
 }
 .btn--block {
   width: 100%;
+  /* в узкой колонке длинная подпись переносится, а не упирается в края */
+  height: auto;
+  min-height: 48px;
+  padding-block: 12px;
+  white-space: normal;
+  line-height: 1.25;
+  text-align: center;
 }
 .btn:disabled,
 .btn[aria-disabled='true'] {
@@ -415,6 +422,10 @@
   width: 56px;
   height: 56px;
   font-size: 18px;
+}
+.avatar--staff {
+  background: var(--brand-text); /* белые инициалы на фирменном красном — контраст AA */
+  color: #fff;
 }
 .avatar-btn {
   border-radius: 50%;
@@ -592,6 +603,16 @@
 }
 .note .ic {
   flex: 0 0 auto;
+}
+.note--box {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-2);
+}
+.note--box b {
+  color: var(--ink);
+  font-weight: 600;
 }
 .kv dd,
 .kv b {
@@ -1088,9 +1109,13 @@ a.list-item:hover .list-item__title {
   text-align: center;
   color: var(--ink-2);
 }
-.empty h3 {
+.empty h3,
+.empty h1 {
   margin-bottom: 8px;
   color: var(--ink);
+}
+.empty h1 {
+  font-size: var(--fs-h3); /* заголовок страницы-заглушки: h1 по структуре, размер как у h3 */
 }
 .empty .btn {
   margin-top: 20px;
@@ -1349,6 +1374,13 @@ a.list-item:hover .list-item__title {
 .demo__item small {
   color: var(--ink-2);
   font-size: 13px;
+}
+.demo__group {
+  margin-top: 12px;
+}
+/* сотрудник банка — тот же вид, но с фирменной меткой слева: другая роль, другой кабинет */
+.demo__item--staff {
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
 /* ---------- всплывающие уведомления ---------- */

@@ -107,6 +107,8 @@ async function fillAndSubmit(page) {
     // 3. Банковская логика: конвейер и кабинет банка
     await caption(page, 'Банк обрабатывает заявку: проверка данных (ЕГРЮЛ, ФНС, БКИ) → оценка риска → решение', 1200);
     const appUrl = page.url();
+    // в видео одна вкладка: кабинет банка открываем служебным токеном, не выходя из клиента
+    await page.evaluate(() => localStorage.setItem('bank_token', JSON.stringify('demo-bank')));
     await page.goto(BASE + '/#/bank');
     await page.waitForSelector('#bank-table table');
     await caption(page, 'Кабинет сотрудника банка: заявка идёт по конвейеру — события через Kafka, данные в PostgreSQL', 0);

@@ -109,6 +109,31 @@ async function fillAndSubmit(page, { revenue, obligations } = {}) {
   await page.waitForSelector('.stepper');
 }
 
+/** Уровень 2: принять предварительные условия → заполнить полную анкету → отправить. */
+async function fullFormAndSubmit(page, opts) {
+  await page.click('#todo [data-action=accept]');
+  await fillFull(page, opts);
+}
+async function fillFull(page, { guarantorInn, collateral } = {}) {
+  await page.waitForSelector('#ff-employees');
+  await page.fill('#ff-employees', '25');
+  await page.click('[data-premises=rent]');
+  await page.fill('#ff-purpose', 'Открытие второго магазина и закупка торгового оборудования');
+  if (collateral) {
+    await page.click(`[data-collateral=${collateral.type}]`);
+    await page.fill('#ff-coll-value', String(collateral.value));
+  }
+  if (guarantorInn) {
+    if (!(await page.isChecked('#ff-guarantor'))) await page.check('#ff-guarantor');
+    await page.fill('#ff-g-name', 'Смирнов Алексей Викторович');
+    await page.fill('#ff-g-inn', guarantorInn);
+  }
+  await page.check('#ff-consent');
+  await saved(page);
+  await page.click('#submit');
+  await page.waitForSelector('.stepper');
+}
+
 const decision = (page, tone) => page.waitForSelector(`#decision.decision--${tone}`, { timeout: DECISION });
 const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
 
@@ -186,12 +211,21 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     }
   });
 
-  await test('Одобрение → подписание → выдача → оплата', async (page) => {
+  await test('Две анкеты: быстрая → предварительное решение → полная → окончательное → подписание → выдача → оплата', async (page) => {
     await login(page, '79000000001');
     await newApplication(page);
+    assert((await page.locator('.levels__item.is-current').count()) === 1, 'нет полосы уровней анкеты');
+    assert((await page.locator('#f-employees').count()) === 0, 'в быстрой анкете не должно быть вопросов полной');
     await fillAndSubmit(page);
     await decision(page, 'ok');
-    assert(norm(await page.textContent('#todo')).includes('Что нужно от вас'), 'нет блока «Что нужно от вас»');
+    assert(norm(await page.textContent('.page-head .status')) === 'Предварительно одобрено', 'решение по быстрой анкете — предварительное');
+    assert(norm(await page.textContent('#todo')).includes('полную анкету'), 'нет подсказки про полную анкету');
+    await fullFormAndSubmit(page);
+    await page.waitForSelector('#decision[data-decision=approved] .actions', { timeout: DECISION });
+    await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
+      timeout: DECISION,
+    });
+    assert(norm(await page.textContent('#view')).includes('Полная анкета'), 'после отправки не видно, что указано в полной анкете');
     const before = (await apiAs(page, 'GET', '/me')).json.balance;
     await page.click('#todo [data-action=accept]');
     await page.check('#sign-ok');
@@ -242,6 +276,41 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await saved(page);
     await page.click('#submit');
     await decision(page, 'ok');
+  });
+
+  await test('Полная анкета: поручитель с просрочками → уточнение, залог на всю сумму → ставка ниже на 1 п.п.', async (page) => {
+    await login(page, '79000000001');
+    await page.goto(BASE + '/#/');
+    await page.click('#products [data-start="business-dev"]');
+    await page.waitForSelector('[data-calc=amount-text]');
+    await page.click('[data-calc=amount-text]');
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('8000000');
+    await page.keyboard.press('Enter');
+    await fillAndSubmit(page);
+    await decision(page, 'ok');
+    await page.click('#todo [data-action=accept]');
+    await page.waitForSelector('#ff-employees');
+    assert(norm(await page.textContent('[data-sec="1"]')).includes('нужен залог'), 'для 8 млн не объяснено, что нужно обеспечение');
+    await page.reload(); // после перезагрузки открывается та же полная анкета
+    await fillFull(page, { guarantorInn: '540100000009' });
+    await page.waitForSelector('#decision[data-decision=need_info]', { timeout: DECISION });
+    assert(norm(await page.textContent('#decision')).includes('просрочки'), 'не объяснено, почему не подошёл поручитель');
+    await page.click('#todo [data-action=fix]');
+    await page.waitForSelector('#ff-employees');
+    await page.click('[data-collateral=realty]');
+    await page.fill('#ff-coll-value', '15000000');
+    assert(norm(await page.textContent('#ff-coll-info')).includes('ниже на 1 п.п.'), 'не подсказано, что залог снизит ставку');
+    await saved(page);
+    await page.click('#submit');
+    await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
+      timeout: DECISION,
+    });
+    const table = norm(await page.textContent('table.compare'));
+    assert(
+      table.includes('Предварительно') && table.includes('Окончательно') && table.includes('−1,0 п.п.'),
+      'нет сравнения ставок: ' + table,
+    );
   });
 
   await test('Отказ объясняется и предлагает, что сделать', async (page) => {
@@ -520,7 +589,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert(out === 0, 'содержимое строк списка заявок вылезает за край');
   });
 
-  await test('Платформа: действия с деньгами идут с Idempotency-Key, кабинет банка показывает инфраструктуру', async (page) => {
+  await test('Платформа: действия с деньгами идут с Idempotency-Key, клиенту кабинет банка закрыт', async (page) => {
     await login(page, '79000000001');
     const keys = [];
     page.on('request', (r) => {
@@ -534,11 +603,46 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
       'POST-действия должны идти с Idempotency-Key: ' + JSON.stringify(keys),
     );
     assert(new Set(keys).size === keys.length, 'у каждого действия свой ключ');
+    // клиенту кабинет банка закрыт — и на экране, и в API
     await page.goto(BASE + '/#/bank');
+    await page.waitForSelector('.bank-gate');
+    assert((await apiAs(page, 'GET', '/bank/applications')).status === 403, 'API кабинета банка должно отвечать клиенту 403');
+  });
+
+  await test('Сотрудник банка: последний в списке входа, попадает в очередь заявок, профиль с правами, кабинет компании закрыт', async (page) => {
+    await page.goto(BASE + '/#/');
+    await page.click('[data-header=login]');
+    await page.waitForSelector('.demo__item');
+    const demo = await page.$$eval('.demo__item', (els) => els.map((e) => e.dataset.demo));
+    assert(demo.at(-1) === '79000000005', 'сотрудник банка должен быть последним в списке: ' + demo.join(', '));
+    await page.click('.demo__item--staff');
+    await page.waitForFunction(() => location.hash === '#/bank');
     await page.waitForSelector('#bank-platform .platform');
     const plat = norm(await page.textContent('#bank-platform'));
     assert(plat.includes('Хранилище') && plat.includes('Шина событий'), 'нет состояния платформы: ' + plat);
-    await page.waitForSelector('#bank-table table');
+    await page.waitForSelector('#bank-table table, #bank-table .empty');
+    const tabs = await page.$$eval('.header--cabinet .nav__link', (els) => els.map((e) => e.textContent.trim()));
+    assert(tabs.join('|') === 'Очередь заявок|Профиль', 'вкладки кабинета банка: ' + tabs.join('|'));
+    assert((await page.locator('[data-header=new-loan]').count()) === 0, 'у сотрудника не должно быть «Нового кредита»');
+
+    await page.click('.nav__link[href="#/bank/profile"]');
+    await page.waitForSelector('.staff-badge');
+    const prof = norm(await page.textContent('#view'));
+    for (const t of ['Соколова Анна Дмитриевна', 'Кредитный аналитик', 'АБ-04217', 'Журнал аудита по заявке']) {
+      assert(prof.includes(t), `в профиле нет «${t}»`);
+    }
+    assert((await page.locator('.perm.is-on').count()) === 3, 'у демо-сотрудника три права кабинета банка');
+    await page.waitForSelector('.staff-queue');
+
+    // роли не смешиваются
+    await page.goto(BASE + '/#/cabinet/applications');
+    await page.waitForFunction(() => location.hash === '#/bank');
+    assert((await apiAs(page, 'GET', '/applications')).status === 403, 'сотруднику API заявок клиента должно отвечать 403');
+    await page.goto(BASE + '/#/');
+    await page.click('#products [data-start="working-capital"]');
+    await page.waitForSelector('.toast--error');
+    assert((await page.locator('#auth-phone').count()) === 0, 'сотруднику не должно открываться окно входа клиента');
+    assert(norm(await page.textContent('.toast--error')).includes('сотрудник банка'), 'нет объяснения, почему нельзя оформить');
   });
 
   await test('Клавиатура: меню услуг по фокусу и Esc, вопросы по Enter, ползунок стрелками, окно держит и возвращает фокус', async (page) => {
