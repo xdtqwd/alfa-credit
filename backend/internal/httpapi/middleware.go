@@ -161,10 +161,32 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		// COOP браузер применяет только на защищённом источнике (HTTPS или localhost); на http://<ip или домен>
+		// он заголовок игнорирует и пишет ошибку в консоль. Поэтому отдаём его только там, где он работает.
+		if trustworthyOrigin(r) {
+			h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		}
 		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
+}
+
+// trustworthyOrigin — «потенциально доверенный» источник по W3C Secure Contexts: HTTPS (в том числе
+// за TLS-терминирующим шлюзом — X-Forwarded-Proto) или loopback.
+func trustworthyOrigin(r *http.Request) bool {
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // sameOrigin — защита от CSRF: изменяющие запросы принимаются только со своего origin

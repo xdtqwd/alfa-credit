@@ -44,3 +44,23 @@ func TestNotifiesOnDecisionOnceDespiteRedelivery(t *testing.T) {
 		t.Fatal("no notification for data_check")
 	}
 }
+
+func TestPreliminaryDecisionAsksForFullFormNotSigning(t *testing.T) {
+	var logs bytes.Buffer
+	s := &Service{Log: slog.New(slog.NewJSONHandler(&logs, nil))}
+	send := func(final bool) string {
+		logs.Reset()
+		after := &domain.Application{ID: "a", Status: domain.StatusApproved, Decision: &domain.Decision{Type: domain.DecisionApproved, Final: final}}
+		e := events.FromChange(&domain.Application{ID: "a", Status: domain.StatusScoring}, after, "")[0]
+		if err := s.Handle(context.Background(), e); err != nil {
+			t.Fatal(err)
+		}
+		return logs.String()
+	}
+	if l := send(false); !strings.Contains(l, "заполните полную анкету") || strings.Contains(l, "подпишите") {
+		t.Fatalf("предварительное решение: %s", l)
+	}
+	if l := send(true); !strings.Contains(l, "подпишите договор") {
+		t.Fatalf("окончательное решение: %s", l)
+	}
+}

@@ -64,7 +64,7 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*domain.U
 		pos = "Индивидуальный предприниматель"
 	}
 	u := &domain.User{
-		ID: newID(), Phone: phone, FullName: strings.TrimSpace(in.FullName), Position: pos, Email: in.Email,
+		ID: newID(), Role: domain.RoleClient, Phone: phone, FullName: strings.TrimSpace(in.FullName), Position: pos, Email: in.Email,
 		PasswordHash: hash, Company: *company, Requisites: RequisitesFor(company),
 		Balance: 250_000, CreatedAt: now, LastLoginAt: now,
 	}
@@ -128,6 +128,9 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, p Profil
 			u.Email = strings.TrimSpace(*p.Email)
 		}
 		if p.Position != nil {
+			if u.IsEmployee() { // должность сотрудника ведёт кадровая система, не он сам
+				return &domain.ValidationError{Field: "position", Message: "должность сотрудника меняется через отдел кадров"}
+			}
 			u.Position = strings.TrimSpace(*p.Position)
 		}
 		return nil
@@ -166,33 +169,62 @@ var DemoAccounts = []DemoAccount{
 	{"79000000004", "Орлов Олег Петрович", "6600000000", 15_000},
 }
 
+// DemoEmployee — сотрудник банка для жюри: входит тем же паролем и попадает в кабинет банка.
+var DemoEmployee = domain.User{
+	Phone: "79000000005", FullName: "Соколова Анна Дмитриевна", Position: "Кредитный аналитик",
+	Email: "a.sokolova@alfabank.example",
+	Employee: &domain.Employee{
+		PersonnelNo: "АБ-04217", Department: "Кредитование малого и среднего бизнеса", Branch: "Операционный офис «Барнаульский»",
+		Permissions: []string{domain.PermViewApplications, domain.PermViewAudit, domain.PermViewPlatform},
+	},
+}
+
 const DemoPassword = "demo1234"
 
-// SeedDemo создаёт демо-аккаунты, если хранилище пустое.
+// SeedDemo создаёт недостающие демо-аккаунты. Идемпотентно: существующие записи не трогает,
+// поэтому новый демо-аккаунт появляется и в базе, созданной прошлой версией.
 func (s *AuthService) SeedDemo(ctx context.Context) error {
-	if s.Users.CountUsers(ctx) > 0 {
+	exists := func(phone string) bool {
+		_, err := s.Users.FindByPhone(ctx, phone)
+		return err == nil
+	}
+	create := func(u *domain.User) error {
+		hash, err := auth.HashPassword(DemoPassword) // своя соль у каждого аккаунта
+		if err != nil {
+			return err
+		}
+		u.PasswordHash = hash
+		if err := s.Users.CreateUser(ctx, u); err != nil && !errors.Is(err, domain.ErrUserExists) {
+			return err
+		}
 		return nil
 	}
 	for _, d := range DemoAccounts {
+		if exists(d.Phone) {
+			continue
+		}
 		c, err := s.Registry.Lookup(ctx, d.INN)
 		if err != nil {
 			return err
 		}
-		hash, err := auth.HashPassword(DemoPassword)
-		if err != nil {
-			return err
-		}
-		now := s.Now()
 		pos := "Генеральный директор"
 		if c.Type == "ИП" {
 			pos = "Индивидуальный предприниматель"
 		}
-		u := &domain.User{
-			ID: newID(), Phone: d.Phone, FullName: d.FullName, Position: pos,
-			Email: "demo" + d.Phone[len(d.Phone)-1:] + "@example.com", PasswordHash: hash,
-			Company: *c, Requisites: RequisitesFor(c), Balance: d.Balance, CreatedAt: now,
+		if err := create(&domain.User{
+			ID: newID(), Role: domain.RoleClient, Phone: d.Phone, FullName: d.FullName, Position: pos,
+			Email:   "demo" + d.Phone[len(d.Phone)-1:] + "@example.com",
+			Company: *c, Requisites: RequisitesFor(c), Balance: d.Balance, CreatedAt: s.Now(),
+		}); err != nil {
+			return err
 		}
-		if err := s.Users.CreateUser(ctx, u); err != nil {
+	}
+	if !exists(DemoEmployee.Phone) {
+		e := DemoEmployee
+		card := *DemoEmployee.Employee
+		card.Permissions = append([]string(nil), card.Permissions...)
+		e.ID, e.Role, e.CreatedAt, e.Employee = newID(), domain.RoleEmployee, s.Now(), &card
+		if err := create(&e); err != nil {
 			return err
 		}
 	}
