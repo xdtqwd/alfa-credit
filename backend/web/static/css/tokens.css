@@ -1,32 +1,42 @@
-/* Styrene A — фирменный шрифт Альфа-Банка из макета Figma (Light, Regular, Medium, Bold).
-   В нём нет «₽», «—» и «« »» — эти знаки браузер берёт из Inter, следующего в списке шрифтов. */
+/* Styrene A Web — фирменный шрифт из макета Figma «УККП 2». Файлы — из архива дизайнера без изменений
+   (StyreneAWeb-*.woff2), подключены те начертания, что есть на страницах: Thin (сноска калькулятора),
+   Light, Regular, Medium, Bold.
+   В файлах урезанный набор знаков: нет ₽, длинного тире, кавычек, %, *, /, скобок и ещё ряда знаков —
+   их браузер берёт из Inter, следующего в списке шрифтов. */
 @font-face {
-  font-family: 'Styrene A';
+  font-family: 'Styrene A Web';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100;
+  src: url(../fonts/StyreneAWeb-Thin.woff2) format('woff2');
+}
+@font-face {
+  font-family: 'Styrene A Web';
   font-style: normal;
   font-display: swap;
   font-weight: 300;
-  src: url(../fonts/styrene-a-300.woff2) format('woff2');
+  src: url(../fonts/StyreneAWeb-Light.woff2) format('woff2');
 }
 @font-face {
-  font-family: 'Styrene A';
+  font-family: 'Styrene A Web';
   font-style: normal;
   font-display: swap;
   font-weight: 400;
-  src: url(../fonts/styrene-a-400.woff2) format('woff2');
+  src: url(../fonts/StyreneAWeb-Regular.woff2) format('woff2');
 }
 @font-face {
-  font-family: 'Styrene A';
+  font-family: 'Styrene A Web';
   font-style: normal;
   font-display: swap;
   font-weight: 500;
-  src: url(../fonts/styrene-a-500.woff2) format('woff2');
+  src: url(../fonts/StyreneAWeb-Medium.woff2) format('woff2');
 }
 @font-face {
-  font-family: 'Styrene A';
+  font-family: 'Styrene A Web';
   font-style: normal;
   font-display: swap;
   font-weight: 700;
-  src: url(../fonts/styrene-a-700.woff2) format('woff2');
+  src: url(../fonts/StyreneAWeb-Bold.woff2) format('woff2');
 }
 
 /* Дизайн-токены по брендбуку Альфа-Банка.
@@ -84,21 +94,23 @@
   --platinum: #e9ebee;
   --platinum-sheen: linear-gradient(160deg, #e9ebee 0%, #fbfcfd 20%, #d2d6dc 46%, #f3f5f7 64%, #c2c7ce 100%);
   --platinum-line: rgba(31, 36, 38, 0.12);
-  /* платина из макета Figma: стек линейного, конического и радиального градиентов (стопы — из макета,
-     угол, центры и прозрачность слоёв подобраны по экспорту main.png) */
-  --platinum-figma: radial-gradient(circle 105vw at 54% 69%, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0)),
-    conic-gradient(
-      from 31deg at 109% 108%,
-      rgba(255, 255, 255, 0.44) 0%,
-      rgba(126, 131, 141, 0.44) 12%,
-      rgba(255, 255, 255, 0.44) 25%,
-      rgba(138, 143, 153, 0.44) 40%,
-      rgba(255, 255, 255, 0.44) 55%,
-      rgba(126, 131, 141, 0.44) 70%,
-      rgba(255, 255, 255, 0.44) 85%,
-      rgba(255, 255, 255, 0.44) 100%
-    ),
-    linear-gradient(114deg, #c9ccd3 0%, #eef0f3 14%, #b4b8c1 30%, #f7f8fa 48%, #b4b8c1 52%, #d8dbe1 68%, #aeb2bb 84%, #e3e5e9 100%);
+  /* Платина первого экрана и подвала — заливки кадров 1:2 и 1:244 Figma «УККП 2» (design/figma-main.json),
+     собирается классом .platinum (components.css). Порядок слоёв снизу вверх, как в Figma:
+     1) линейный, 80 %, soft light: в изолированной группе ниже него пусто, поэтому он ложится обычным
+        наложением [FIGMA: стопы, прозрачность; CALC: угол из gradientTransform — atan2(a·H, −b·W),
+        a = −0.7596, b = 0.2404; для кадра 1440 × 900 это 243,149°, как в коде, который отдаёт сама Figma];
+     2) радиальный белый, 40 % [FIGMA: центр (720; 332,78), полуоси 720 × 567,22 при 1440 × 900 —
+        в процентах от кадра, чтобы растягивался вместе с ним, как в Figma];
+     3) конический, 12 %, soft light [FIGMA: SVG из кода Figma — conic-gradient с аффинной матрицей
+        в кадре 1440 × 900, preserveAspectRatio=none растягивает его вместе с блоком];
+     4) Noise: монохромное чёрное зерно плотностью 40 % [FIGMA]; непрозрачность зерна 1,2 % [CALC: подобрана
+        по экспорту Figma в масштабе 1:1 — среднее затемнение ≈ 1,5 уровня, σ ≈ 1,2; при 8 % на пиксель
+        фон темнел бы на 8 уровней, а в рендере Figma так не происходит]. */
+  --platinum-stops: rgba(201, 204, 211, 0.8) 0%, rgba(238, 240, 243, 0.8) 14%, rgba(180, 184, 193, 0.8) 30%, rgba(247, 248, 250, 0.8) 48%,
+    rgba(180, 184, 193, 0.8) 52%, rgba(216, 219, 225, 0.8) 68%, rgba(174, 178, 187, 0.8) 84%, rgba(227, 229, 233, 0.8) 100%;
+  --platinum-radial: radial-gradient(50% 63.024% at 50% 36.976%, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0));
+  --platinum-angular: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 900' preserveAspectRatio='none'><g transform='matrix(55.75 49.333 43.456 -60.627 -260.5 -263.33)'><foreignObject x='-233.78' y='-233.78' width='467.57' height='467.57'><div xmlns='http://www.w3.org/1999/xhtml' style='width:100%25;height:100%25;opacity:0.12;background-image:conic-gradient(from 90deg, rgb(255,255,255) 0%25, rgb(191,193,198) 6%25, rgb(158,162,170) 9%25, rgb(126,131,141) 12%25, rgb(158,162,170) 15.25%25, rgb(191,193,198) 18.5%25, rgb(255,255,255) 25%25, rgb(197,199,204) 32.5%25, rgb(167,171,179) 36.25%25, rgb(138,143,153) 40%25, rgb(167,171,179) 43.75%25, rgb(197,199,204) 47.5%25, rgb(255,255,255) 55%25, rgb(191,193,198) 62.5%25, rgb(158,162,170) 66.25%25, rgb(126,131,141) 70%25, rgb(158,162,170) 73.75%25, rgb(191,193,198) 77.5%25, rgb(255,255,255) 85%25, rgb(255,255,255) 100%25)'></div></foreignObject></g></svg>");
+  --platinum-noise: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n' x='0' y='0' width='100%25' height='100%25'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='1' seed='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 60 -31.2'/><feComponentTransfer><feFuncA type='linear' slope='0.012'/></feComponentTransfer></filter><rect width='240' height='240' filter='url(%23n)'/></svg>");
   --bg: #ffffff;
   --surface: #f5f5f3;
   --surface-2: #ededea;
@@ -115,7 +127,7 @@
 
   /* типографика */
   --font: 'Inter', Arial, 'Helvetica Neue', system-ui, sans-serif;
-  --font-brand: 'Styrene A', 'Inter', Arial, 'Helvetica Neue', system-ui, sans-serif; /* главная, шапка и подвал — по макету Figma */
+  --font-brand: 'Styrene A Web', 'Inter', Arial, 'Helvetica Neue', system-ui, sans-serif; /* главная, шапка и подвал — по макету Figma */
   --fs-xs: 12px;
   --fs-s: 14px;
   --fs-m: 16px;
@@ -136,6 +148,54 @@
   --container: 1200px;
   --gutter: 24px;
   --header-h: 72px;
+
+  /* ===== Главная — токены макета Figma «УККП 2», кадр Main (1:521), 1440 px =====
+     Источник — свойства слоёв (design/figma-main.json); стилей и переменных в файле Figma нет.
+     [FIGMA] — значение из слоя, [CALC] — вычислено из геометрии слоёв, [ASSUMED] — в макете не задано. */
+  --lp-red: #ef3124; /* [FIGMA] кнопки, разделители меню, подчерки заголовков, ползунок, логотип */
+  --lp-red-hover: #c9241a; /* [ASSUMED] наведение — в макете состояний нет, тон из прежней вёрстки */
+  --lp-ink: #000; /* [FIGMA] весь текст главной и подвала */
+  --lp-muted: #71747a; /* [FIGMA] подписи полей, «Вам понадобится», правая часть ползунка */
+  --lp-note: #7e838d; /* [FIGMA] сноска под «Оформить онлайн» */
+  --lp-line: #c9ccd3; /* [FIGMA] обводка «Вам понадобится», серые кнопки, линии между шагами */
+  --lp-line-hover: #b9bdc5; /* [ASSUMED] наведение на серую кнопку — тон из прежней вёрстки */
+  --lp-field: #d9d9d9; /* [FIGMA] поля суммы и срока */
+  --lp-surface: #eef0f3; /* [FIGMA] плашки: калькулятор, преимущества, кредиты, шаги, вопросы */
+  --lp-surface-hover: #e6e8ec; /* [ASSUMED] наведение на вопрос — тон из прежней вёрстки */
+  --lp-white: #fff; /* [FIGMA] тело страницы, «Наше предложение», круги иконок, «Вам понадобится» */
+
+  --lp-r-xl: 45px; /* [FIGMA] карточки, белое тело страницы, подвал, кнопки-«пилюли» */
+  --lp-r-l: 30px; /* [FIGMA] «Наше предложение» и кнопка «Оформить онлайн» */
+  --lp-r-m: 15px; /* [FIGMA] поля, «Вам понадобится», вопросы */
+
+  /* кегли [FIGMA]. Интерлиньяж «auto» Figma [CALC]: высота строки — round(1,28 × кегль) у Styrene A Web
+     (13/15/18/20/26/31/46/61 при 10/12/14/16/20/24/36/48) и round(1,21 × кегль) у Inter (19/24/29/44 при
+     16/20/24/36) — это высоты текстовых блоков в макете и шаг строк многострочных текстов в рендере Figma */
+  --lp-fs-hero: 48px;
+  --lp-fs-title: 36px;
+  --lp-fs-h3: 24px;
+  --lp-fs-l: 20px;
+  --lp-fs-m: 16px;
+  --lp-fs-s: 14px;
+  --lp-fs-xs: 12px;
+  --lp-fs-2xs: 10px;
+  --lp-lh-hero: 61px;
+  --lp-lh-title: 46px;
+  --lp-lh-h3: 31px;
+  --lp-lh-l: 26px;
+  --lp-lh-m: 20px;
+  --lp-lh-s: 18px;
+  --lp-lh-xs: 15px;
+  --lp-lh-2xs: 13px;
+  --lp-lh-inter-title: 44px;
+  --lp-lh-inter-h3: 29px;
+  --lp-lh-inter-l: 24px;
+  --lp-lh-inter-m: 19px;
+
+  /* сетка [FIGMA]: колонка текста 150…1290 (1140 px); ряды шире или уже колонки — отступами от неё */
+  --lp-content: 1140px;
+  --lp-title-gap: 66px; /* [FIGMA] низ подчерка → блок; и шаг между полями калькулятора, рядами карточек */
+  --lp-section-gap: 131px; /* [FIGMA] «Требования» → «Частые вопросы», вопросы → подвал */
 }
 
 @media (max-width: 720px) {

@@ -7,23 +7,26 @@ const pct = (v, min, max) => (max === min ? 100 : ((v - min) / (max - min)) * 10
 
 /**
  * Поле с ползунком, как в калькуляторах alfabank.ru: серая плашка с подписью и крупным значением,
- * ползунок лежит на её нижнем крае, под ним шкала из трёх отметок.
+ * ползунок лежит на её нижнем крае, под ним шкала из трёх отметок (или только границы — ends).
  */
-const slider = ({ key, label, value, text, min, max, step, scale }) => `
+const slider = ({ key, label, value, text, min, max, step, scale, ends }) => `
   <div class="calc__field">
     <label class="slider">
       <span class="slider__label">${label}</span>
       <input class="slider__value" data-calc="${key}-text" inputmode="numeric" value="${text}" aria-label="${label}">
       <input class="range" type="range" data-calc="${key}" min="${min}" max="${max}" step="${step}" value="${value}" style="--p:${pct(value, min, max)}%" aria-label="${label}, ползунок">
     </label>
-    <div class="range-scale">${[min, (min + max) / 2, max].map((v) => `<span>${scale(v)}</span>`).join('')}</div>
+    <div class="range-scale">${(ends ? [min, max] : [min, (min + max) / 2, max]).map((v) => `<span>${scale(v)}</span>`).join('')}</div>
   </div>`;
 
-/** Разметка полей суммы и срока. У продукта с фиксированным сроком (овердрафт) — без ползунка. */
-export function calcFields(p, amount, term) {
+/**
+ * Разметка полей суммы и срока. У продукта с фиксированным сроком (овердрафт) — без ползунка.
+ * ends — на шкале только границы, termScale — подписи шкалы срока (главная по макету: «6 месяцев», «60 месяцев»).
+ */
+export function calcFields(p, amount, term, { ends = false, termScale = shortTerm } = {}) {
   const fixed = p.min_term === p.max_term;
   return `
-    ${slider({ key: 'amount', label: 'Сумма кредита', value: amount, text: `${fmt(amount)} ₽`, min: p.min_amount, max: p.max_amount, step: 10000, scale: shortRub })}
+    ${slider({ key: 'amount', label: 'Сумма кредита', value: amount, text: `${fmt(amount)} ₽`, min: p.min_amount, max: p.max_amount, step: 10000, scale: shortRub, ends })}
     ${
       fixed
         ? `
@@ -43,7 +46,8 @@ export function calcFields(p, amount, term) {
             min: p.min_term,
             max: p.max_term,
             step: 1,
-            scale: (v) => shortTerm(Math.round(v)),
+            scale: (v) => termScale(Math.round(v)),
+            ends,
           })
     }`;
 }

@@ -1,75 +1,84 @@
-/* Главная по макету Figma «УККП» (экспорт main.png, 1440 px).
-   Сетка: контент 1140 px (отступ 150 px при ширине 1440), ряды карточек 1164 px, шаги и вопросы 1122 px.
-   Шрифт — Styrene A; блоки «Как получить кредит», «Требования» и «Документы» в макете набраны Inter. */
+/* Главная по макету Figma «УККП 2», кадр Main (1:521), 1440 × 4540 — дерево слоёв в design/figma-main.json.
+   Цвета, кегли, интерлиньяжи, радиусы — токены --lp-* из tokens.css [FIGMA]. Отступы, которых нет в слоях
+   напрямую, вычислены из координат слоёв — формула в комментарии [CALC]; то, чего в макете нет (состояния,
+   узкие экраны), помечено [ASSUMED]. Координаты в комментариях — от левого верхнего угла кадра.
+   Сетка: колонка текста 150…1290 (1140 px); ряды шире или уже колонки — отступами от неё.
+   Несостыковки внутри макета до 10 px между одинаковыми элементами (соседние карточки, кольца шагов)
+   выровнены по большинству — каждая отмечена в комментарии. */
 
 .page--landing {
   padding: 0;
   font-family: var(--font-brand);
-  color: #000;
+  color: var(--lp-ink);
 }
 .page--landing h1,
 .page--landing h2,
 .page--landing h3 {
   font-family: inherit;
-  color: #000;
+  color: inherit;
   letter-spacing: 0;
 }
 .lp-container {
   width: 100%;
-  max-width: calc(1140px + 2 * var(--gutter));
+  max-width: calc(var(--lp-content) + 2 * var(--gutter));
   margin: 0 auto;
   padding: 0 var(--gutter);
 }
 
-/* ---------- кнопки макета: красные «пилюли» ---------- */
+/* ---------- кнопки: красные «пилюли» [FIGMA] ---------- */
 .lp-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 56px;
-  padding: 0 26px;
-  border-radius: 28px;
-  background: var(--brand-button);
-  color: #fff;
-  font: 700 16px / 1 var(--font-brand);
+  padding: 0 25px;
+  border-radius: var(--lp-r-xl);
+  background: var(--lp-red);
+  color: var(--lp-white);
+  font: 700 var(--lp-fs-m) / var(--lp-lh-m) var(--font-brand);
   white-space: nowrap;
   transition: background 0.15s;
 }
 .lp-btn:hover {
-  background: var(--brand-button-hover);
+  background: var(--lp-red-hover);
 }
 .lp-btn:focus-visible {
   box-shadow: var(--focus);
 }
+/* «Оформить заявку» 190 × 56, Bold 14 [FIGMA] */
 .lp-btn--hero {
   width: 190px;
-  font-size: 14px;
+  font-size: var(--lp-fs-s);
+  line-height: var(--lp-lh-s);
 }
+/* «Оформить онлайн» 500 × 56, радиус 30 [FIGMA] */
 .lp-btn--block {
   width: 100%;
+  border-radius: var(--lp-r-l);
 }
+/* кнопки карточек 113 × 45, Bold 12 [FIGMA] */
 .lp-btn--sm {
   height: 45px;
   padding: 0 12px;
-  border-radius: 22.5px;
-  font-size: 12px;
+  font-size: var(--lp-fs-xs);
+  line-height: var(--lp-lh-xs);
 }
 .lp-btn--gray {
-  background: #c9ccd3;
-  color: #1f2024;
+  background: var(--lp-line);
+  color: var(--lp-ink);
 }
 .lp-btn--gray:hover {
-  background: #b9bdc5;
+  background: var(--lp-line-hover);
 }
 
-/* ---------- заголовки разделов: 36 px с красной чертой 50×2 ---------- */
+/* ---------- заголовки разделов: Medium 36, красный подчерк 50 × 2 [FIGMA] ---------- */
 .lp-title {
   position: relative;
-  margin: 0 0 67px;
-  padding-bottom: 15px;
-  font-size: 36px;
+  margin: 0 0 var(--lp-title-gap);
+  padding-bottom: 15px; /* [CALC] подчерк на 59 px ниже верха строки (832 − 773): 59 − 46 + 2 — сам подчерк */
+  font-size: var(--lp-fs-title);
   font-weight: 500;
-  line-height: 1.2;
+  line-height: var(--lp-lh-title);
 }
 .lp-title::after {
   content: '';
@@ -78,174 +87,197 @@
   bottom: 0;
   width: 50px;
   height: 2px;
-  background: var(--brand);
+  border-radius: 5px;
+  background: var(--lp-red);
 }
+/* «Как получить кредит» — Inter SemiBold 36 по центру [FIGMA] */
 .page--landing .lp-title-c {
   margin: 0;
   text-align: center;
-  font: 600 36px / 1.2 var(--font);
+  font: 600 var(--lp-fs-title) / var(--lp-lh-inter-title) var(--font);
 }
 
-/* ---------- первый экран: платина из макета, шапка лежит поверх ---------- */
+/* ---------- первый экран: кадр 1:2 1440 × 900, платина (.platinum), шапка лежит поверх ---------- */
 .lp-hero {
-  position: relative;
-  min-height: 760px;
-  padding-top: 120px; /* под прозрачной шапкой */
-  background: var(--platinum-figma);
+  --platinum-h: 900px;
+  height: 900px;
+  padding-top: 120px; /* высота шапки главной (components.css) */
 }
 .lp-hero__in {
   position: relative;
-  display: flex;
-  align-items: flex-start;
-  min-height: 590px;
+  height: 100%;
 }
 .lp-hero__text {
-  position: relative;
-  z-index: 1;
-  padding-top: 95px;
+  padding-top: 95px; /* [CALC] заголовок с y 215 − шапка 120 */
 }
 .lp-hero h1 {
   margin: 0;
-  font-size: 48px;
+  font-size: var(--lp-fs-hero);
   font-weight: 700;
-  line-height: 1.2;
+  line-height: var(--lp-lh-hero);
   white-space: nowrap;
 }
 .lp-hero__lead {
-  max-width: 580px;
-  margin: 20px 0 0;
-  font-size: 20px;
+  max-width: 564px; /* [FIGMA] ширина текстового блока: перенос после «15 секунд,» */
+  margin: 23px 0 0; /* [CALC] 299 − (215 + 61) */
+  font-size: var(--lp-fs-l);
   font-weight: 300;
-  line-height: 1.3;
+  line-height: var(--lp-lh-l);
 }
 .lp-hero__text .lp-btn {
-  margin-top: 70px;
+  margin-top: 69px; /* [CALC] 420 − (299 + 2 × 26) */
 }
+/* иллюстрация 519 × 323 с x 771, y 262: правый край — по краю колонки 1290 [FIGMA] */
 .lp-hero__art {
   position: absolute;
-  top: 144px;
-  right: 26px;
-  width: 517px;
-  height: auto;
+  top: 142px; /* [CALC] 262 − 120 */
+  right: var(--gutter);
+  width: 519px;
+  height: 323px;
+  object-fit: cover; /* [FIGMA] заливка картинкой в режиме FILL: кадр 519 × 323, картинка 2451 × 1523 */
   pointer-events: none;
 }
 
-/* белое тело страницы наезжает на платину скруглением 48 px */
+/* белое тело страницы (1:23) наезжает на платину с y 710 скруглением 45 [FIGMA] */
 .lp-body {
   position: relative;
-  margin-top: -50px;
-  padding: 68px 0 108px;
-  border-radius: 48px 48px 0 0;
-  background: #fff;
-}
-.lp-section + .lp-section {
-  margin-top: 132px;
-}
-.lp-section--how {
-  margin-top: 91px !important;
-}
-.lp-section--req {
-  margin-top: 67px !important;
-}
-.lp-section--faq {
-  margin-top: 131px !important;
-}
-.lp-section--benefits + .lp-section {
-  margin-top: 66px;
+  margin-top: -190px; /* [CALC] 710 − 900 */
+  /* [CALC] сверху 773 − 710; снизу — 131 до подвала (4040 − 3909) минус отступ подвала 24 (components.css) */
+  padding: 63px 0 107px;
+  border-radius: var(--lp-r-xl) var(--lp-r-xl) 0 0;
+  background: var(--lp-white);
 }
 
-/* ---------- калькулятор «Рассчитайте выгоду» ---------- */
+/* ---------- калькулятор «Рассчитайте выгоду» (1:24) ---------- */
+.lp-section--calc .lp-title {
+  margin-left: 7px; /* [FIGMA] заголовок с x 157 — на 7 px правее колонки, в отличие от остальных */
+}
+/* плашка 1154 × 470 с x 143: на 7 px шире колонки с каждой стороны; поля — с x 173 (+30),
+   «Наше предложение» 550 × 430 — в 20 px от краёв плашки [FIGMA] */
 .lp-calc {
   display: grid;
   grid-template-columns: 524px minmax(0, 1fr);
   gap: 30px;
-  margin: 0 0 0 -14px; /* в макете блок шире контента на 14 px слева: 136…1290 */
+  margin: 0 -7px;
   padding: 20px 20px 20px 30px;
-  border-radius: 40px;
-  background: #eef0f3;
+  border-radius: var(--lp-r-xl);
+  background: var(--lp-surface);
 }
+/* поля 935…1021 и 1087…1173, «Вам понадобится» 1239…1325: шаг 66 между плашками [FIGMA] */
 .lp-calc__form {
   display: flex;
   flex-direction: column;
-  padding: 15px 0 25px;
+  gap: var(--lp-title-gap);
+  padding: 15px 0 25px; /* [CALC] 935 − 920; 1350 − 1325 */
 }
 .lp-calc__fields {
   display: grid;
-  gap: 66px;
+  gap: var(--lp-title-gap);
 }
-/* поля суммы и срока — серые плашки 524×86; ползунок на нижнем крае, шкала под плашкой */
+/* поле 524 × 86, скругление только сверху, #d9d9d9; подпись Regular 16 #71747a с (+18; +16),
+   значение Medium 20 с (+20; +44); ползунок лежит на нижнем крае, шкала — сразу под ним [FIGMA] */
 .lp-calc .calc__field {
   position: relative;
 }
 .lp-calc .slider {
+  align-content: start;
+  gap: 8px; /* [CALC] 979 − (951 + 20) */
   height: 86px;
-  padding: 14px 18px 0;
-  border-radius: 12px;
-  background: #d9d9d9;
-  box-shadow: none;
+  padding: 16px 18px 0;
+  border-radius: var(--lp-r-m) var(--lp-r-m) 0 0;
+  background: var(--lp-field);
 }
 .lp-calc .slider:focus-within:not(.slider--fixed) {
-  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.18); /* [ASSUMED] фокус поля — в макете состояний нет */
 }
 .lp-calc .slider__label {
-  color: #585b60; /* в макете #71747a — затемнено до контраста 4.5:1 на сером поле (WCAG AA) */
-  font-size: 15px;
+  color: var(--lp-muted);
+  font-size: var(--lp-fs-m);
+  line-height: var(--lp-lh-m);
 }
 .lp-calc .slider__value {
-  font: 500 22px / 1.3 var(--font-brand);
-  color: #000;
+  margin-left: 2px; /* [FIGMA] значение с x 193, подпись — с 191 */
+  color: var(--lp-ink);
+  font: 500 var(--lp-fs-l) / var(--lp-lh-l) var(--font-brand);
+  font-variant-numeric: normal;
+  letter-spacing: 0;
 }
-.lp-calc .range-scale {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: calc(100% + 10px);
-  color: #62656a;
-  font-size: 13px;
+/* линия 2 px: слева до бегунка красная, справа #71747a; бегунок — круг 15 px без тени [FIGMA];
+   центр линии — на нижнем крае поля */
+.lp-calc .range {
+  --range-track: 2px;
+  --range-thumb: 15px;
+  --range-radius: 0;
+  --range-on: var(--lp-red);
+  --range-off: var(--lp-muted);
+  --range-shadow: none;
+  bottom: -7.5px; /* [CALC] половина бегунка */
 }
+/* подписи границ — Light 10, чёрные; правая кончается на 698 — на 1 px дальше поля [FIGMA].
+   В макете подписи начинаются от уровня линии, но бегунок там нарисован посередине; у края шкалы
+   (а по умолчанию сумма как раз у левого края) бегунок наезжал бы на подпись — поэтому подписи на 6 px ниже,
+   под бегунком [ASSUMED] */
+.lp-calc .range-scale,
 .lp-calc [data-calc-fixed] .calc__note {
   position: absolute;
-  top: calc(100% + 10px);
+  left: 0;
+  right: -1px;
+  top: calc(100% + 6px);
   margin: 0;
-  color: #62656a;
-  font-size: 13px;
+  padding: 0;
+  color: var(--lp-ink);
+  font: 300 var(--lp-fs-2xs) / var(--lp-lh-2xs) var(--font-brand);
 }
+.lp-calc .slider--fixed {
+  border-radius: var(--lp-r-m) var(--lp-r-m) 0 0;
+}
+/* «Вам понадобится» 524 × 86: белая, обводка 1 px #c9ccd3 снаружи, радиус 15; подпись с (+18; +15),
+   значки 30 × 30 с y +43 [FIGMA] */
 .lp-need {
   display: grid;
-  gap: 6px;
-  margin-top: auto;
-  padding: 13px 18px 14px;
-  border: 1px solid #c9ccd3;
-  border-radius: 14px;
-  background: #fff;
+  align-content: start;
+  gap: 8px; /* [CALC] 1282 − (1254 + 20) */
+  height: 86px;
+  padding: 15px 18px 0;
+  border-radius: var(--lp-r-m);
+  background: var(--lp-white);
+  box-shadow: 0 0 0 1px var(--lp-line);
 }
 .lp-need__title {
-  color: #6b6d72;
-  font-size: 15px;
+  color: var(--lp-muted);
+  font-size: var(--lp-fs-m);
+  line-height: var(--lp-lh-m);
 }
 .lp-need__items {
   display: flex;
-  gap: 32px;
+  gap: 33px; /* [FIGMA] «Паспорт» кончается на 305, домик начинается с 338 */
 }
+/* подписи по центру значков; в макете «Залог» на 2 px ниже «Паспорта» — выровнено */
 .lp-need__item {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  font-size: 15px;
+  gap: 11px; /* [FIGMA] паспорт 191…221, текст с 232 */
+  font-size: var(--lp-fs-m);
+  line-height: var(--lp-lh-m);
 }
+.lp-need__item + .lp-need__item {
+  gap: 15px; /* [FIGMA] домик 338…368, «Залог» с 383 */
+}
+
+/* «Наше предложение» 550 × 430, белая, радиус 30; текст с x +25, заголовок с y +19 [FIGMA] */
 .lp-offer {
   display: flex;
   flex-direction: column;
   min-height: 430px;
-  padding: 21px 25px 27px;
-  border-radius: 30px;
-  background: #fff;
+  padding: 19px 25px 24px; /* [CALC] снизу: сноска из трёх строк кончается на 1326 — 1350 − 1326 */
+  border-radius: var(--lp-r-l);
+  background: var(--lp-white);
 }
 .lp-offer__title {
-  margin: 0 0 41px;
-  font-size: 24px;
+  margin: 0;
+  font-size: var(--lp-fs-h3);
   font-weight: 500;
-  line-height: 1.2;
+  line-height: var(--lp-lh-h3);
 }
 .lp-offer__pay,
 .lp-offer__row {
@@ -256,77 +288,103 @@
 }
 .lp-offer__pay span,
 .lp-offer__row span {
-  font-size: 16px;
+  font-size: var(--lp-fs-m);
   font-weight: 300;
+  line-height: var(--lp-lh-m);
+}
+/* платёж — Bold 36 с интерлиньяжем 41 px, правый край 1252 [FIGMA] */
+.lp-offer__pay {
+  margin-top: 43px; /* [CALC] 1013 − (939 + 31) */
 }
 .lp-offer__pay b {
-  font-size: 38px;
-  line-height: 1.2;
+  font-size: var(--lp-fs-title);
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
+  line-height: 41px;
   white-space: nowrap;
   transition: opacity 0.15s;
 }
 .lp-offer__pay b.is-stale {
-  opacity: 0.45;
+  opacity: 0.45; /* [ASSUMED] пересчёт — в макете состояния нет */
 }
+/* ставка и переплата: значения Regular 16 кончаются на 1231 — в 21 px от края кнопки [FIGMA] */
 .lp-offer__row {
-  margin-top: 21px;
-  padding-right: 20px;
-  line-height: 24px;
+  padding-right: 21px;
 }
 .lp-offer__row b {
-  font-size: 16px;
+  font-size: var(--lp-fs-m);
   font-weight: 400;
+  line-height: var(--lp-lh-m);
   white-space: nowrap;
 }
-.lp-offer .lp-btn {
-  margin-top: 39px;
+.lp-offer__pay + .lp-offer__row {
+  margin-top: 26px; /* [CALC] «Ставка*» 1080 − низ платежа 1054 */
 }
+.lp-offer__row + .lp-offer__row {
+  margin-top: 25px; /* [CALC] 1125 − (1080 + 20) */
+}
+.lp-offer .lp-btn {
+  margin-top: 41px; /* [CALC] 1186 − (1125 + 20) */
+}
+/* сноска Thin 16 #7e838d, блок 443 px по центру кнопки (780…1223), в 24 px под ней [FIGMA] */
 .lp-offer__note {
-  max-width: 450px;
-  margin: 22px auto 0;
-  color: #6c7079; /* в макете #8e929b — затемнено до контраста 4.5:1 (WCAG AA) */
-  font-size: 15px;
-  font-weight: 300;
-  line-height: 1.33;
+  max-width: 443px;
+  margin: 24px auto 0;
+  color: var(--lp-note);
+  font-size: var(--lp-fs-m);
+  font-weight: 100;
+  line-height: var(--lp-lh-m);
 }
 
-/* ---------- ряды карточек ---------- */
+/* ---------- ряды из четырёх карточек ---------- */
 .lp-cards4 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 30px;
 }
-.lp-container.lp-cards4 {
-  max-width: calc(1164px + 2 * var(--gutter));
+
+/* преимущества (1:140): ряд 138…1301, карточки 267,77 × 250, радиус 45 [FIGMA];
+   в макете шаг 298,74 / 298,75 / 297,74 — здесь ровный, отклонение до 0,7 px */
+.lp-section--benefits {
+  margin-top: 134px; /* [CALC] 1504 − низ калькулятора 1370 */
 }
+.lp-benefits {
+  gap: 30.64px; /* [CALC] (1163 − 4 × 267,77) / 3 */
+  margin: 0 -11px 0 -12px;
+}
+/* круг 60 px в 28 px от краёв, заголовок и текст с x +31 — как в первой карточке [FIGMA]; в макете у четвёртой
+   карточки круг в 18 px от края, а тексты второй и четвёртой гуляют на 2,5 px — выровнено */
 .lp-benefit {
   min-height: 250px;
-  padding: 26px 28px 20px;
-  border-radius: 40px;
-  background: #eef0f3;
+  padding: 28px 20px 20px 31px;
+  border-radius: var(--lp-r-xl);
+  background: var(--lp-surface);
 }
 .lp-benefit__ic {
   display: grid;
   place-items: center;
   width: 60px;
   height: 60px;
+  margin-left: -3px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--lp-white);
   overflow: hidden;
 }
 .lp-benefit h3 {
-  margin: 13px 0 14px;
-  font: 700 16px / 1.25 var(--font);
+  margin: 12px 0 0; /* [CALC] 1604 − (1532 + 60) */
+  font: 700 var(--lp-fs-m) / var(--lp-lh-inter-m) var(--font);
 }
 .lp-benefit p {
-  margin: 0;
-  font-size: 14px;
-  line-height: 18px;
+  max-width: 206px; /* [FIGMA] ширина текстового блока */
+  margin: 12px 0 0; /* [CALC] 1635 − (1604 + 19) */
+  font-size: var(--lp-fs-s);
+  line-height: var(--lp-lh-s);
 }
 
+/* кредиты (1:83): ряд 138…1302, карточки 268 × 500 с шагом 298,67, радиус 45 [FIGMA] */
+.lp-section--products {
+  margin-top: var(--lp-title-gap); /* [FIGMA] 1820 − 1754 */
+}
 .lp-products {
+  gap: calc(92px / 3); /* [CALC] (1164 − 4 × 268) / 3 */
   margin: 0 -12px;
 }
 .lp-product {
@@ -334,78 +392,92 @@
   flex-direction: column;
   align-items: center;
   min-height: 500px;
-  padding: 25px 16px 46px;
-  border-radius: 40px;
-  background: #eef0f3;
+  padding: 24px 16px 46px; /* [FIGMA] кнопки с x +16, низ кнопок — в 46 px от низа карточки */
+  border-radius: var(--lp-r-xl);
+  background: var(--lp-surface);
   text-align: center;
 }
+/* название Medium 20 по центру карточки; однострочное в макете с y +35, двухстрочное — с +24: место под
+   две строки, текст по середине [CALC]. В макете название первой карточки на 4,5 px правее центра,
+   а «Оборотный кредит» выровнен по ширине (фактически влево) — здесь все по центру, как третья и четвёртая */
 .lp-product__title {
   display: grid;
   place-items: center;
-  min-height: 50px;
+  min-height: calc(2 * var(--lp-lh-l));
   margin: 0;
-  font-size: 20px;
+  font-size: var(--lp-fs-l);
   font-weight: 500;
-  line-height: 1.25;
+  line-height: var(--lp-lh-l);
 }
+/* описание Regular 12 по центру, блок 208 px; низ трёхстрочных описаний в макете — на 2072, двухстрочного
+   (третья карточка) — на 2069: прижато к низу места под три строки [CALC], отклонение третьей — 3 px */
 .lp-product__text {
-  max-width: 200px;
-  min-height: 48px;
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.3;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  max-width: 208px;
+  min-height: calc(3 * var(--lp-lh-xs));
+  margin: 4px 0 0; /* [CALC] 2027 − (1947 + 24 + 2 × 26) */
+  font-size: var(--lp-fs-xs);
+  line-height: var(--lp-lh-xs);
 }
+/* иллюстрация 160 × 160 с y +152, на 4,5 px правее центра карточки (x +58…59) [FIGMA] */
 .lp-product__art {
   display: grid;
   place-items: center;
   width: 160px;
   height: 160px;
-  margin-top: 23px;
+  margin: 27px 0 0 9px; /* [CALC] 2099 − (2027 + 3 × 15) */
 }
 .lp-product__art img {
   width: 160px;
   height: 160px;
   object-fit: contain;
-  transition: transform 0.4s cubic-bezier(0.2, 0, 0.2, 1);
 }
-.lp-product:hover .lp-product__art img {
-  transform: translateY(-4px) scale(1.03);
-}
+/* «Ставка» и «Сумма» Medium 12 с x +36, y 2279 и 2314 [FIGMA]; значений в макете нет — справа данные
+   продукта с сервера, Regular 12 [ASSUMED] */
 .lp-product__kv {
   align-self: stretch;
   display: grid;
-  gap: 15px;
-  margin: 20px 0 0;
-  padding: 0 21px;
+  gap: 20px; /* [CALC] 35 − 15 */
+  margin: 20px 0 0; /* [FIGMA] 2279 − низ иллюстрации 2259 */
+  padding: 0 20px;
   text-align: left;
 }
 .lp-product__kv div {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--lp-fs-xs);
+  line-height: var(--lp-lh-xs);
+}
+.lp-product__kv dt {
   font-weight: 500;
-  line-height: 20px;
 }
 .lp-product__kv dd {
   margin: 0;
-  font-weight: 400;
 }
 .lp-product__actions {
   align-self: stretch;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 10px; /* [FIGMA] 113 + 10 + 113 */
   margin-top: auto;
   padding-top: 22px;
 }
 
-/* ---------- «Как получить кредит»: кольца шагов на линии и карточки (Inter, как в макете) ---------- */
+/* ---------- «Как получить кредит» (1:168): кольца шагов на линии и карточки, Inter ---------- */
+.lp-section--how {
+  margin-top: 87px; /* [CALC] 2534 − низ карточек кредитов 2447 */
+}
+/* ряд 160…1283: карточки 348 × 203, радиус 45; в макете промежутки 38 и 41 — здесь ровные 39,5 [CALC];
+   кольца 64 px над центрами карточек (у первого в макете сдвиг 3 px влево — выровнено) */
 .lp-road {
+  --road-gap: 39.5px;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 39px;
-  margin: 59px 9px 0;
+  gap: var(--road-gap);
+  margin: 62px 7px 0 10px; /* [CALC] кольца с y 2640 − (2534 + 44); [FIGMA] x 160…1283 */
   padding: 0;
   list-style: none;
   font-family: var(--font);
@@ -414,17 +486,20 @@
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 36px;
+  gap: 35px; /* [FIGMA] карточки с y 2739 − низ колец 2704 */
 }
-/* серая линия от кольца к следующему кольцу */
+/* серая линия 300 × 1 #c9ccd3 посередине между соседними кольцами, на уровне их центра [FIGMA];
+   в макете линии стоят неровно (зазоры до колец 8/17 и 13/12 px) — здесь по середине.
+   На узких экранах линия укорачивается, чтобы не заходить на кольца */
 .lp-road__step:not(:last-child)::after {
+  --line: min(300px, 100% + var(--road-gap) - 92px);
   content: '';
   position: absolute;
-  top: 32px;
-  left: calc(50% + 41px);
-  width: calc(100% - 82px + 39px);
+  top: 31.5px;
+  left: calc(50% + (100% + var(--road-gap) - var(--line)) / 2);
+  width: var(--line);
   height: 1px;
-  background: #c9ccd3;
+  background: var(--lp-line);
 }
 .lp-road__ring {
   width: 64px;
@@ -434,97 +509,114 @@
   align-self: stretch;
   justify-self: stretch;
   min-height: 203px;
-  padding: 36px 30px;
-  border-radius: 48px;
-  background: #eef0f3;
+  padding: 34px 20px 20px; /* [FIGMA] заголовок с y +34 */
+  border-radius: var(--lp-r-xl);
+  background: var(--lp-surface);
   text-align: center;
 }
 .lp-road__card h3 {
-  margin: 0 0 24px;
-  font: 600 24px / 1.2 var(--font);
-}
-.lp-road__card p {
   margin: 0;
-  font-size: 20px;
-  line-height: 1.2;
+  font: 600 var(--lp-fs-h3) / var(--lp-lh-inter-h3) var(--font);
 }
-/* в макете у третьего шага текстовый блок уже — строки «Подпишите договор и / деньги поступят на / расчетный счет.» */
-.lp-road__step:nth-child(3) .lp-road__card p {
-  max-width: 230px;
-  margin: 0 auto;
+/* текст Inter 20 по центру, блок 283 px [FIGMA] */
+.lp-road__card p {
+  max-width: 283px;
+  margin: 23px auto 0; /* [CALC] 2825 − (2773 + 29) */
+  font-size: var(--lp-fs-l);
+  line-height: var(--lp-lh-inter-l);
 }
 
-/* ---------- требования и документы ---------- */
+/* ---------- требования и документы: 542 × 208, радиус 45, Inter [FIGMA] ---------- */
+.lp-section--req {
+  margin-top: var(--lp-title-gap); /* [FIGMA] 3008 − 2942 */
+}
 .lp-req {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 38px;
-  max-width: calc(1122px + 2 * var(--gutter));
+  gap: 38px; /* [FIGMA] 160…702 и 740…1282 */
+  margin: 0 8px 0 10px;
   font-family: var(--font);
 }
 .lp-req__card {
   min-height: 208px;
-  padding: 25px 22px 24px 33px;
-  border-radius: 40px;
-  background: #eef0f3;
+  padding: 24.85px 20px 20px 33px; /* [FIGMA] заголовок с (+33; +24,85) */
+  border-radius: var(--lp-r-xl);
+  background: var(--lp-surface);
 }
 .lp-req__card h2 {
-  margin: 0 0 18px;
-  font: 600 20px / 1.2 var(--font);
+  margin: 0;
+  font: 600 var(--lp-fs-l) / var(--lp-lh-inter-l) var(--font);
 }
 .lp-req__card p {
-  margin: 0;
-  font-size: 16px;
-  line-height: 1.25;
+  max-width: 469px; /* [FIGMA] ширина текстового блока «Документов» */
+  margin: 22px 0 0; /* [CALC] 3117 − (3076 + 19) */
+  font-size: var(--lp-fs-m);
+  line-height: var(--lp-lh-inter-m);
 }
 .lp-req__card .lp-req__lead {
-  margin-bottom: 27px;
+  margin-top: 19.15px; /* [CALC] 3076 − (3032,85 + 24) */
   font-weight: 500;
 }
+/* пункты с шагом 26,69; галочка 19,19 × 19,19 (icons8-ок из архива), текст с x 226 [FIGMA] */
 .lp-checklist {
   display: grid;
-  gap: 6.5px;
-  margin: 0;
+  gap: 7.69px; /* [CALC] 26,69 − 19 */
+  margin: 18.87px 0 0; /* [CALC] 3075,72 − (3032,85 + 24) */
   padding: 0;
   list-style: none;
-  font-size: 16px;
-  line-height: 20px;
+  font-size: var(--lp-fs-m);
+  line-height: var(--lp-lh-inter-m);
 }
 .lp-checklist li {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 13.41px; /* [FIGMA] значок 193,41…212,59, текст с 226 */
+}
+.lp-checklist img {
+  flex: 0 0 auto;
+  width: 19.19px;
+  height: 19.19px;
 }
 
-/* ---------- частые вопросы: серые плашки 1122×71 ---------- */
+/* ---------- частые вопросы (1:220): плашки 1120 × 71 с шагом 91, радиус 15 [FIGMA] ----------
+   в макете три нижние плашки шире (1126, 1132, 1140 — по центру страницы), а тексты и значки у всех
+   на одних x — здесь все одной ширины, как первые две */
+.lp-section--faq {
+  margin-top: var(--lp-section-gap); /* [FIGMA] 3347 − 3216 */
+}
 .lp-section--faq .faq-list {
   gap: 20px;
-  margin: 0 9px;
+  margin: 0 10px; /* [FIGMA] 160…1280 */
 }
 .page--landing .acc.faq {
-  border-radius: 16px;
-  background: #eef0f3;
+  border-radius: var(--lp-r-m);
+  background: var(--lp-surface);
 }
 .page--landing .acc.faq:hover {
-  background: #e6e8ec;
+  background: var(--lp-surface-hover);
 }
+/* вопрос Regular 20 с (+24; +23), значок «развернуть» 20 × 20 с (−46; +26) от правого верхнего угла [FIGMA] */
 .page--landing .acc.faq .acc__head {
+  align-items: flex-start;
   min-height: 71px;
-  padding: 18px 24px;
-  font: 400 20px / 1.3 var(--font-brand);
+  padding: 23px 26px 22px 24px;
+  font: 400 var(--lp-fs-l) / var(--lp-lh-l) var(--font-brand);
 }
 .page--landing .acc.faq .acc__ctl {
-  display: none; /* в макете вопросы без шеврона — раскрываются по клику на плашку */
+  display: flex;
+  margin-top: 3px; /* [CALC] значок с +26, строка с +23 */
 }
+/* раскрытый ответ — в макете не нарисован [ASSUMED] */
 .page--landing .acc.faq .acc__content {
   padding: 0 24px 22px;
-  color: #3b3d42;
+  color: var(--ink-2);
 }
 
-/* ---------- узкие экраны: та же структура в одну-две колонки ---------- */
+/* ---------- узкие экраны: в макете только кадр 1440 px — та же структура в одну-две колонки [ASSUMED] ---------- */
 @media (max-width: 1200px) {
   .lp-hero__art {
     width: 400px;
+    height: auto;
     top: 190px;
   }
   .lp-hero h1 {
@@ -537,25 +629,54 @@
     grid-template-columns: minmax(0, 1fr);
     margin: 0;
   }
-  .lp-need {
-    margin-top: 66px;
+  .lp-section--calc .lp-title {
+    margin-left: 0;
   }
   .lp-cards4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .lp-benefits,
   .lp-products {
+    gap: 24px;
     margin: 0;
   }
+  .lp-benefit p {
+    max-width: none;
+  }
   .lp-road,
+  .lp-req,
   .lp-section--faq .faq-list {
     margin-left: 0;
     margin-right: 0;
   }
-  .lp-road__card {
-    padding: 28px 20px;
-  }
   .lp-road__card p {
     font-size: 17px;
+  }
+}
+@media (max-width: 960px) {
+  .lp-hero {
+    --platinum-h: 760px;
+    height: auto;
+    padding-top: var(--header-h);
+  }
+  .lp-hero__in {
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 120px;
+  }
+  .lp-hero__text {
+    padding-top: 40px;
+  }
+  .lp-hero__text .lp-btn {
+    margin-top: 32px;
+  }
+  .lp-hero__art {
+    position: static;
+    width: min(100%, 420px);
+    margin: 32px auto 0;
+  }
+  .lp-body {
+    margin-top: -50px;
   }
 }
 @media (max-width: 860px) {
@@ -571,50 +692,33 @@
     gap: 24px;
   }
 }
-@media (max-width: 960px) {
-  .lp-hero {
-    padding-top: var(--header-h);
-  }
-}
 @media (max-width: 720px) {
-  .lp-hero {
-    min-height: 0;
-  }
-  .lp-hero__in {
-    flex-direction: column;
-    min-height: 0;
-    padding-bottom: 80px;
-  }
-  .lp-hero__text {
-    padding-top: 40px;
-  }
   .lp-hero h1 {
     font-size: 32px;
+    line-height: 1.2;
   }
   .lp-hero__lead {
     font-size: 18px;
-  }
-  .lp-hero__text .lp-btn {
-    margin-top: 32px;
+    line-height: 1.3;
   }
   .lp-hero__art {
-    position: static;
     width: min(100%, 360px);
-    margin: 32px auto 0;
   }
   .lp-body {
     padding: 48px 0 80px;
     border-radius: 32px 32px 0 0;
   }
-  .lp-section + .lp-section,
+  .lp-section--benefits,
+  .lp-section--products,
   .lp-section--how,
   .lp-section--req,
   .lp-section--faq {
-    margin-top: 72px !important;
+    margin-top: 72px;
   }
   .page--landing .lp-title,
   .page--landing .lp-title-c {
     font-size: 28px;
+    line-height: 1.25;
   }
   .lp-title {
     margin-bottom: 36px;
@@ -622,6 +726,9 @@
   .lp-calc {
     padding: 16px;
     border-radius: 28px;
+  }
+  .lp-calc__form {
+    padding: 0 0 8px;
   }
   .lp-offer {
     min-height: 0;
@@ -635,6 +742,9 @@
   }
   .lp-cards4 {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .lp-benefits,
+  .lp-products {
     gap: 16px;
   }
   .lp-benefit,
@@ -644,11 +754,16 @@
     min-height: 0;
     border-radius: 28px;
   }
-  .lp-road__card p {
-    font-size: 17px;
+  .lp-need {
+    height: auto;
+    padding-bottom: 13px;
   }
   .lp-need__items {
     flex-wrap: wrap;
     gap: 12px 24px;
+  }
+  .page--landing .acc.faq .acc__head {
+    padding-top: 18px;
+    padding-bottom: 18px;
   }
 }

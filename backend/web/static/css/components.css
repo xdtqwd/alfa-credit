@@ -239,21 +239,23 @@
   color: var(--ink-2);
 }
 
-/* шапка сайта по макету Figma: Styrene A 20 px, пункты через красные разделители, без пилюль;
-   контент шириной 1140 px, как на главной */
+/* шапка сайта по макету Figma: Styrene A Web 20 px, пункты через красные разделители 1×20, без пилюль;
+   контент шириной 1140 px, как на главной. Первый пункт начинается с x 256, последний кончается на 1052;
+   в макете промежутки у разделителей неровные (15…31 px) — здесь один шаг: 22 px до текста, 19 px после. */
 .header--site .container {
   max-width: calc(1140px + 2 * var(--gutter));
 }
 .header--site .header__in {
-  gap: 59px;
+  gap: 57px;
 }
 .header--site .nav {
   gap: 0;
+  padding-bottom: 4px; /* строка меню в макете на 2 px выше оси знака */
   font-family: var(--font-brand);
 }
 .header--site .nav__link {
   height: 44px;
-  padding: 0 19px 0 24px;
+  padding: 0 19px 0 22px;
   border-radius: 0;
   background: none;
   color: #000;
@@ -284,6 +286,13 @@
   padding: 0 24px;
   border-radius: 22px;
   font: 700 16px / 1 var(--font-brand);
+}
+/* «Войти» в макете нет [ASSUMED]: на главной — в цвете кнопок макета */
+.header--platinum .header__right .btn--primary {
+  background: var(--lp-red);
+}
+.header--platinum .header__right .btn--primary:hover {
+  background: var(--lp-red-hover);
 }
 /* на главной шапка выше (120 px) и с крупным знаком — как в макете */
 .header--platinum .header__in {
@@ -807,44 +816,51 @@
 }
 
 /* ---------- ползунок ---------- */
+/* размеры и цвета — переменными: главная задаёт свои по макету Figma, анкета остаётся с этими */
 .range {
+  --p: 50%;
+  --range-track: 3px;
+  --range-radius: 2px;
+  --range-thumb: 24px;
+  --range-on: var(--brand);
+  --range-off: #b9bec2;
+  --range-shadow: 0 2px 6px rgba(239, 49, 36, 0.35);
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 24px;
+  height: var(--range-thumb);
   margin: 0;
   background: transparent;
   cursor: pointer;
-  --p: 50%;
 }
 .range::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--brand) var(--p), #b9bec2 var(--p));
+  height: var(--range-track);
+  border-radius: var(--range-radius);
+  background: linear-gradient(to right, var(--range-on) var(--p), var(--range-off) var(--p));
 }
 .range::-moz-range-track {
-  height: 3px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--brand) var(--p), #b9bec2 var(--p));
+  height: var(--range-track);
+  border-radius: var(--range-radius);
+  background: linear-gradient(to right, var(--range-on) var(--p), var(--range-off) var(--p));
 }
 .range::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 24px;
-  height: 24px;
-  margin-top: -10.5px;
+  width: var(--range-thumb);
+  height: var(--range-thumb);
+  margin-top: calc((var(--range-track) - var(--range-thumb)) / 2);
   border-radius: 50%;
-  background: var(--brand);
+  background: var(--range-on);
   border: 0;
-  box-shadow: 0 2px 6px rgba(239, 49, 36, 0.35);
+  box-shadow: var(--range-shadow);
   transition: transform 0.15s;
 }
 .range::-moz-range-thumb {
-  width: 24px;
-  height: 24px;
+  width: var(--range-thumb);
+  height: var(--range-thumb);
   border-radius: 50%;
-  background: var(--brand);
+  background: var(--range-on);
   border: 0;
-  box-shadow: 0 2px 6px rgba(239, 49, 36, 0.35);
+  box-shadow: var(--range-shadow);
 }
 .range:active::-webkit-slider-thumb {
   transform: scale(1.12);
@@ -1480,63 +1496,99 @@ a.list-item:hover .list-item__title {
   }
 }
 
-/* ---------- футер ---------- */
-/* подвал — платина, как шапка главной, со скруглёнными верхними углами, как на alfabank.ru */
-/* подвал по макету Figma: платина, скругление 48 px сверху, три колонки (Styrene A) */
-.footer {
+/* ---------- платина: первый экран главной и подвал (кадры 1:2 и 1:244 Figma «УККП 2») ---------- */
+/* Слои — токены --platinum-* (tokens.css). Изолированная группа: слои смешиваются только между собой
+   и ложатся на белую страницу — как в экспорте Figma. Конический слой и зерно — псевдоэлементами под
+   содержимым. --platinum-h — высота блока для угла линейного слоя (в Figma градиент растягивается
+   вместе с кадром, поэтому угол зависит от пропорций блока). */
+.platinum {
+  --platinum-h: 900px;
   position: relative;
+  isolation: isolate;
+  background: var(--platinum-radial), linear-gradient(243.149deg, var(--platinum-stops));
+}
+@supports (background: linear-gradient(atan2(1px, 1px), #000, #fff)) {
+  .platinum {
+    background: var(--platinum-radial),
+      linear-gradient(atan2(calc(-0.7596 * var(--platinum-h)), calc(-0.2404 * 100vw)), var(--platinum-stops));
+  }
+}
+.platinum::before,
+.platinum::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.platinum::before {
+  background: var(--platinum-angular) 0 0 / 100% 100% no-repeat;
+  mix-blend-mode: soft-light;
+}
+.platinum::after {
+  background: var(--platinum-noise);
+}
+
+/* ---------- футер ---------- */
+/* подвал по кадру 1:244 Figma «УККП 2»: 1440 × 500, платина, скругление 45 сверху, Styrene A Web;
+   колонки с x 150, 720, 1030 [FIGMA]; отступы — от верха подвала по координатам слоёв */
+.footer {
+  --platinum-h: 500px;
   margin-top: 24px;
   min-height: 500px;
-  padding: 47px 0 64px;
-  border-radius: 48px 48px 0 0;
-  background: var(--platinum-figma);
-  color: #000;
+  padding: 46px 0 64px; /* [FIGMA] «Альфа Бизнес» с y +46; снизу [ASSUMED] */
+  border-radius: var(--lp-r-xl) var(--lp-r-xl) 0 0;
+  color: var(--lp-ink);
   font-family: var(--font-brand);
 }
 .footer .container {
-  max-width: calc(1140px + 2 * var(--gutter));
+  max-width: calc(var(--lp-content) + 2 * var(--gutter));
 }
 .footer__crumbs {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 54px;
-  margin: 0 0 110px;
-  font-size: 20px;
+  gap: 8px 50px; /* [FIGMA] «Альфа Бизнес» 150…306, «Кредиты для бизнеса» с 356 */
+  margin: 0 0 114px; /* [CALC] заголовки колонок с y +186: 186 − 46 − 26 */
+  font-size: var(--lp-fs-l);
   font-weight: 500;
-  line-height: 1.2;
+  line-height: var(--lp-lh-l);
 }
 .footer__grid {
   display: grid;
   grid-template-columns: 570px 310px minmax(0, 1fr);
 }
+/* пункты Regular 16 с шагом 36 [FIGMA] */
 .footer__col {
   display: grid;
-  gap: 16px;
+  gap: 16px; /* [CALC] 36 − 20 */
   align-content: start;
 }
-.footer__col:first-child {
-  max-width: 420px;
-}
+/* заголовки колонок Light 16 прописными; содержимое — на 55 px ниже их верха [FIGMA] */
 .footer__title {
-  margin-bottom: 16px;
-  font-size: 16px;
-  font-weight: 400;
+  margin-bottom: 19px; /* [CALC] 55 − 20 − шаг пунктов 16 */
+  font-size: var(--lp-fs-m);
+  font-weight: 300;
+  line-height: var(--lp-lh-m);
   text-transform: uppercase;
 }
 .footer__col a {
-  color: #000;
-  font-size: 16px;
-  line-height: 1.25;
+  color: var(--lp-ink);
+  font-size: var(--lp-fs-m);
+  line-height: var(--lp-lh-m);
   transition: color 0.15s;
 }
 .footer__col a:hover {
-  color: var(--brand-text);
+  color: var(--brand-text); /* [ASSUMED] наведение — в макете состояний нет */
 }
+/* «О проекте» — Light 16, блок 440 px, на 2 px правее заголовка колонки [FIGMA] */
 .footer__col p {
+  max-width: 442px;
   margin: 0;
-  font-size: 16px;
+  padding-left: 2px;
+  font-size: var(--lp-fs-m);
   font-weight: 300;
-  line-height: 1.25;
+  line-height: var(--lp-lh-m);
 }
 @media (max-width: 1024px) {
   .footer__grid {

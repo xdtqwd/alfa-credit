@@ -1,8 +1,8 @@
-// Главная: продуктовая страница кредитов для бизнеса — вёрстка по макету Figma «УККП».
+// Главная: продуктовая страница кредитов для бизнеса — вёрстка по макету Figma «УККП 2» (design/figma-main.json).
 // Все действия прежние: калькулятор считает сервер, «Оформить» открывает анкету продукта,
 // «Рассчитать» переносит продукт в калькулятор, вопросы раскрываются.
 import { $, on, storage } from '../core/dom.js';
-import { esc, fmt, rate, rub, shortRub } from '../core/format.js';
+import { esc, fmt, months, rate, rub, shortRub } from '../core/format.js';
 import { session, product } from '../core/session.js';
 import { accordion } from '../ui/accordion.js';
 import { calcFields, bindCalc, createQuoter } from '../features/calculator.js';
@@ -10,15 +10,27 @@ import { startApplication } from '../features/loan.js';
 
 const IMG = 'img/landing/';
 
+// Иконки — оригинальные файлы из архива макета; размер — как у слоя в Figma (молния 42, остальные 40).
 const BENEFITS = [
-  ['bolt.webp', 'Быстрое решение', 'Мы проверяем компанию и считаем нагрузку автоматически – ответ приходит, пока страница открыта.'],
-  ['doc.svg', 'Без лишних документов', 'Данные компании берем из ЕГРЮЛ, выручку – из налоговой. Не нужно сканировать пачки документов.'],
+  ['bolt.svg', 42, 'Быстрое решение', 'Мы проверяем компанию и считаем нагрузку автоматически – ответ приходит, пока страница открыта.'],
   [
-    'scales.webp',
+    'doc.svg',
+    40,
+    'Без лишних документов',
+    'Данные компании берем из ЕГРЮЛ, выручку – из налоговой. Не нужно сканировать пачки документов.',
+  ],
+  [
+    'scales.svg',
+    40,
     'Прозрачный процесс',
     'Показываем решение системы, плюсы и минусы заявки. При других условиях – сравнение с тем, что вы просили.',
   ],
-  ['wallet.webp', 'Всё в одном кабинете', 'Подписание, графики и платежи – там же, где и заявка. Деньги приходят сразу на расчетный счет'],
+  [
+    'wallet.svg',
+    40,
+    'Всё в одном кабинете',
+    'Подписание, графики и платежи – там же, где и заявка. Деньги приходят сразу на расчетный счет',
+  ],
 ];
 
 // Картинки продуктов из макета; у продукта без картинки карточка остаётся без иллюстрации.
@@ -70,6 +82,9 @@ const FAQ = [
   ['Можно ли погасить кредит досрочно?', 'Да. Платежи вносятся с расчётного счёта прямо в кабинете.'],
 ];
 
+// шеврон вопросов — иконка «развернуть» из архива макета (слой 20×20), при раскрытии поворачивается
+const EXPAND = `<img src="${IMG}expand.svg" width="20" height="20" alt="">`;
+
 const sectionTitle = (text) => `<h2 class="lp-title">${text}</h2>`;
 
 export default async function landing(root, { signal, scroll }) {
@@ -81,14 +96,14 @@ export default async function landing(root, { signal, scroll }) {
 
   root.className = 'page page--landing';
   root.innerHTML = `
-    <section class="hero lp-hero">
+    <section class="hero lp-hero platinum">
       <div class="lp-container lp-hero__in">
         <div class="lp-hero__text">
           <h1>Деньги, когда они нужны бизнесу</h1>
           <p class="lp-hero__lead">Кредит на развитие бизнеса – решение за 15 секунд, без визита в банк</p>
           <button class="lp-btn lp-btn--hero" data-start="business-dev">Оформить заявку</button>
         </div>
-        <img class="lp-hero__art" src="${IMG}hero.webp" width="500" height="311" alt="" fetchpriority="high">
+        <img class="lp-hero__art" src="${IMG}hero.webp" width="519" height="323" alt="" fetchpriority="high">
       </div>
     </section>
 
@@ -103,7 +118,7 @@ export default async function landing(root, { signal, scroll }) {
             <div class="lp-need">
               <span class="lp-need__title">Вам понадобится</span>
               <span class="lp-need__items">
-                <span class="lp-need__item"><img src="${IMG}passport.svg" width="26" height="26" alt="">Паспорт</span>
+                <span class="lp-need__item"><img src="${IMG}passport.svg" width="30" height="30" alt="">Паспорт</span>
                 <span class="lp-need__item"><img src="${IMG}house.svg" width="30" height="30" alt="">Залог</span>
               </span>
             </div>
@@ -121,18 +136,20 @@ export default async function landing(root, { signal, scroll }) {
     </section>
 
     <section class="lp-section lp-section--benefits" id="benefits">
-      <div class="lp-container lp-cards4">${BENEFITS.map(
-        ([img, t, d]) => `
-        <div class="lp-benefit">
-          <span class="lp-benefit__ic"><img src="${IMG}${img}" width="40" height="40" alt=""></span>
-          <h3>${t}</h3>
-          <p>${d}</p>
-        </div>`,
-      ).join('')}
+      <div class="lp-container">
+        <div class="lp-cards4 lp-benefits">${BENEFITS.map(
+          ([img, size, t, d]) => `
+          <div class="lp-benefit">
+            <span class="lp-benefit__ic"><img src="${IMG}${img}" width="${size}" height="${size}" alt=""></span>
+            <h3>${t}</h3>
+            <p>${d}</p>
+          </div>`,
+        ).join('')}
+        </div>
       </div>
     </section>
 
-    <section class="lp-section" id="products">
+    <section class="lp-section lp-section--products" id="products">
       <div class="lp-container">
         ${sectionTitle('Выберите кредит')}
         <div class="lp-cards4 lp-products">${products
@@ -172,15 +189,17 @@ export default async function landing(root, { signal, scroll }) {
     </section>
 
     <section class="lp-section lp-section--req" id="requirements">
-      <div class="lp-container lp-req">
-        <div class="lp-req__card">
-          <h2>Требования</h2>
-          <ul class="lp-checklist">${REQUIREMENTS.map((r) => `<li><img src="${IMG}check.svg" width="20" height="20" alt="">${r}</li>`).join('')}</ul>
-        </div>
-        <div class="lp-req__card">
-          <h2>Документы</h2>
-          <p class="lp-req__lead">Понадобится только паспорт</p>
-          <p>Данные компании берем из ЕГРЮЛ/ЕГРИП, выручку – из данных налоговой. Договор подписывается системой Госключ.</p>
+      <div class="lp-container">
+        <div class="lp-req">
+          <div class="lp-req__card">
+            <h2>Требования</h2>
+            <ul class="lp-checklist">${REQUIREMENTS.map((r) => `<li><img src="${IMG}check.svg" width="19" height="19" alt="">${r}</li>`).join('')}</ul>
+          </div>
+          <div class="lp-req__card">
+            <h2>Документы</h2>
+            <p class="lp-req__lead">Понадобится только паспорт</p>
+            <p>Данные компании берем из ЕГРЮЛ/ЕГРИП, выручку – из данных налоговой. Договор подписывается системой Госключ.</p>
+          </div>
         </div>
       </div>
     </section>
@@ -188,7 +207,7 @@ export default async function landing(root, { signal, scroll }) {
     <section class="lp-section lp-section--faq" id="faq">
       <div class="lp-container">
         ${sectionTitle('Частые вопросы')}
-        <div class="faq-list">${FAQ.map(([q, a], i) => accordion({ key: `faq-${i}`, header: q, body: `<p>${a}</p>`, cls: 'faq' })).join('')}</div>
+        <div class="faq-list">${FAQ.map(([q, a], i) => accordion({ key: `faq-${i}`, header: q, body: `<p>${a}</p>`, cls: 'faq', ctl: EXPAND })).join('')}</div>
       </div>
     </section>
     </div>`;
@@ -215,7 +234,8 @@ export default async function landing(root, { signal, scroll }) {
   };
   const paintFields = () => {
     const box = $('#calc-fields', root);
-    box.innerHTML = calcFields(p, amount, term);
+    // шкала по макету: только границы, срок — месяцами («6 месяцев», «60 месяцев»)
+    box.innerHTML = calcFields(p, amount, term, { ends: true, termScale: months });
     bindCalc(box, p, (v) => {
       ({ amount, term } = v);
       recalc();
