@@ -4,10 +4,51 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// Регрессия: сбор /metrics шёл параллельно с регистрацией новых метрик и читал их карты без блокировки —
+// под -race тест падал, а в проде конкурентный доступ к map аварийно завершал процесс.
+func TestMetricsWriteTextConcurrentWithNewMetrics(t *testing.T) {
+	r := NewRegistry()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 500 {
+			name := "m" + strconv.Itoa(i)
+			r.Inc(name+"_total", "счётчик")
+			r.Observe(name+"_seconds", "гистограмма", 0.1)
+		}
+	}()
+	for running := true; running; {
+		select {
+		case <-done:
+			running = false
+		default:
+			r.WriteText(io.Discard)
+		}
+	}
+	if got := r.CounterTotal("m499_total"); got != 1 {
+		t.Fatalf("CounterTotal = %d, want 1", got)
+	}
+}
+
+func TestCounterTotalSumsAllLabels(t *testing.T) {
+	r := NewRegistry()
+	r.Add("events_published_total", "События", 3, "type", "a")
+	r.Add("events_published_total", "События", 4, "type", "b")
+	r.Inc("other_total", "Другое")
+	if got := r.CounterTotal("events_published_total"); got != 7 {
+		t.Fatalf("CounterTotal = %d, want 7", got)
+	}
+	if got := r.CounterTotal("missing_total"); got != 0 {
+		t.Fatalf("CounterTotal(missing) = %d, want 0", got)
+	}
+}
 
 func TestMaskPII(t *testing.T) {
 	if got := MaskPhone("+7 (900) 000-00-01"); got != "7900***0001" {

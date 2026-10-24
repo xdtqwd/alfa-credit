@@ -47,11 +47,30 @@ func envDur(key, def string) (time.Duration, error) {
 	return d, nil
 }
 
-func envFloat(key string, def float64) float64 {
-	if v, err := strconv.ParseFloat(os.Getenv(key), 64); err == nil {
-		return v
+// envFloat и envInt: пусто — значение по умолчанию, неразборчивое значение — ошибка запуска
+// (как у envDur), а не тихая подмена значением по умолчанию. bits — разрядность целевого типа.
+func envFloat(key string, def float64) (float64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
 	}
-	return def
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return f, nil
+}
+
+func envInt(key string, def int64, bits int) (int64, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, bits)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return n, nil
 }
 
 func main() {
@@ -97,8 +116,34 @@ func run(log *slog.Logger, addr string) error {
 	if err != nil {
 		return err
 	}
+	rateRPS, err := envFloat("RATE_LIMIT_RPS", 20)
+	if err != nil {
+		return err
+	}
+	rateBurst, err := envFloat("RATE_LIMIT_BURST", 60)
+	if err != nil {
+		return err
+	}
+	kafkaParts, err := envInt("KAFKA_PARTITIONS", 6, 32)
+	if err != nil {
+		return err
+	}
+	kafkaRepl, err := envInt("KAFKA_REPLICATION", 1, 16)
+	if err != nil {
+		return err
+	}
 	role := env("APP_ROLE", "all") // all | api | worker — API и обработчики событий масштабируются отдельно
 	runHTTP, runWorkers := role != "worker", role != "api"
+	// секреты и cookie нужны только API; проверяем до подключения к базе — неверный конфиг падает сразу
+	var sec securityConfig
+	if runHTTP {
+		if sec, err = loadSecurity(os.Getenv); err != nil {
+			return err
+		}
+		for _, w := range sec.Warnings {
+			log.Warn(w)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -148,10 +193,8 @@ func run(log *slog.Logger, addr string) error {
 		closeBus = func() {}
 	)
 	if brokers := strings.TrimSpace(os.Getenv("KAFKA_BROKERS")); brokers != "" {
-		parts, _ := strconv.Atoi(env("KAFKA_PARTITIONS", "6"))
-		repl, _ := strconv.Atoi(env("KAFKA_REPLICATION", "1"))
 		kb, err := kafkabus.New(ctx, kafkabus.Config{Brokers: strings.Split(brokers, ","), ClientID: "credit-" + role,
-			Partitions: int32(parts), Replication: int16(repl), Log: log})
+			Partitions: int32(kafkaParts), Replication: int16(kafkaRepl), Log: log})
 		if err != nil {
 			return err
 		}
@@ -258,7 +301,11 @@ func run(log *slog.Logger, addr string) error {
 			_, _ = w.Write([]byte(`{"status":"ready"}`))
 		})
 		hs := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-		go func() { _ = hs.ListenAndServe() }()
+		go func() {
+			if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("health server", "err", err) // без него Docker HEALTHCHECK пометит воркер нездоровым
+			}
+		}()
 		log.Info("worker started", "storage", storeKind, "bus", busKind, "health", addr)
 		<-ctx.Done()
 		sh, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -273,10 +320,11 @@ func run(log *slog.Logger, addr string) error {
 
 	// ---------- HTTP API ----------
 	api := &httpapi.Server{
-		Svc: svc, Auth: authSvc, CookieSecure: env("COOKIE_SECURE", "false") == "true", Repo: repo, Log: log,
-		Static: web.Static(), Version: version, BankToken: env("BANK_TOKEN", "demo-bank"),
-		Idem: idem, Limiter: httpapi.NewRateLimiter(envFloat("RATE_LIMIT_RPS", 20), envFloat("RATE_LIMIT_BURST", 60)),
-		RequestTimeout: reqTimeout, Ready: ready,
+		Svc: svc, Auth: authSvc, CookieSecure: sec.CookieSecure, Repo: repo, Log: log,
+		Static: web.Static(), Version: version, BankToken: sec.BankToken,
+		Idem: idem, Limiter: httpapi.NewRateLimiter(rateRPS, rateBurst),
+		// для API шина некритична: при недоступной Kafka заявки принимаются, события ждут в outbox
+		RequestTimeout: reqTimeout, Degradable: ready,
 		Platform: func(ctx context.Context) map[string]any {
 			out := map[string]any{"storage": storeKind, "bus": busKind, "role": role}
 			if pg != nil {
@@ -297,7 +345,7 @@ func run(log *slog.Logger, addr string) error {
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", addr, "storage", storeKind, "bus", busKind, "role", role, "step_delay", stepDelay.String())
+		log.Info("listening", "addr", addr, "mode", sec.Mode, "cookie_secure", sec.CookieSecure, "storage", storeKind, "bus", busKind, "role", role, "step_delay", stepDelay.String())
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}

@@ -22,9 +22,31 @@ type Requisites struct {
 	KPP         string `json:"kpp,omitempty"`
 }
 
-// User — представитель бизнеса, имеющий доступ к кабинету компании.
+// Роли пользователей. Пустая роль у записей, созданных до появления ролей, — это клиент.
+const (
+	RoleClient   = "client"   // представитель бизнеса: заявки, кредиты, оплата
+	RoleEmployee = "employee" // сотрудник банка: очередь заявок, журнал аудита, состояние платформы
+)
+
+// Employee — служебная карточка сотрудника банка. У клиента её нет.
+type Employee struct {
+	PersonnelNo string   `json:"personnel_no"` // табельный номер
+	Department  string   `json:"department"`   // подразделение
+	Branch      string   `json:"branch"`       // офис / филиал
+	Permissions []string `json:"permissions"`  // что доступно в кабинете банка
+}
+
+// Права сотрудника в кабинете банка.
+const (
+	PermViewApplications = "applications.view" // очередь заявок и решения
+	PermViewAudit        = "audit.view"        // журнал аудита по заявке
+	PermViewPlatform     = "platform.view"     // состояние платформы
+)
+
+// User — пользователь кабинета: представитель бизнеса (клиент) или сотрудник банка.
 type User struct {
 	ID           string     `json:"id"`
+	Role         string     `json:"role"`
 	Phone        string     `json:"phone"` // только цифры, 11 знаков, начинается с 7
 	FullName     string     `json:"full_name"`
 	Position     string     `json:"position"`
@@ -33,8 +55,25 @@ type User struct {
 	Company      Company    `json:"company"`
 	Requisites   Requisites `json:"requisites"`
 	Balance      int64      `json:"balance"` // остаток на расчётном счёте, ₽
+	Employee     *Employee  `json:"employee,omitempty"`
 	CreatedAt    time.Time  `json:"created_at"`
 	LastLoginAt  time.Time  `json:"last_login_at"`
+}
+
+// IsEmployee — сотрудник банка. Роль проверяется на сервере при каждом запросе к разделам.
+func (u *User) IsEmployee() bool { return u.Role == RoleEmployee }
+
+// Can — есть ли у сотрудника право perm. У клиента прав кабинета банка нет.
+func (u *User) Can(perm string) bool {
+	if !u.IsEmployee() || u.Employee == nil {
+		return false
+	}
+	for _, p := range u.Employee.Permissions {
+		if p == perm {
+			return true
+		}
+	}
+	return false
 }
 
 // Credit/Debit — движения по расчётному счёту (выдача кредита, оплата платежа).

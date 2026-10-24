@@ -211,6 +211,11 @@ func TestFormatting(t *testing.T) {
 			t.Fatalf("Money(%d)=%q want %q", in, got, want)
 		}
 	}
+	for in, want := range map[int64]string{5_000_000: "5 000 000", 18_000_000: "18 000 000", 100: "100"} {
+		if got := GroupDigits(in); got != want {
+			t.Fatalf("GroupDigits(%d)=%q want %q", in, got, want)
+		}
+	}
 	for in, want := range map[int]string{1: "1 месяц", 2: "2 месяца", 5: "5 месяцев", 11: "11 месяцев", 21: "21 месяц", 24: "24 месяца"} {
 		if got := Months(in); got != want {
 			t.Fatalf("Months(%d)=%q want %q", in, got, want)

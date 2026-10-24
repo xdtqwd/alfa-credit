@@ -167,27 +167,70 @@ func (s *Service) Submit(ctx context.Context, clientID, id string) (*domain.Appl
 	if _, err := s.Get(ctx, clientID, id); err != nil {
 		return nil, err
 	}
+	level := 1
 	out, err := s.Repo.Update(ctx, id, func(a *domain.Application) error {
+		if a.EditableFull() {
+			// уровень 2: полная анкета уходит на окончательное решение; предварительное решение и проверки остаются
+			level = 2
+			if err := a.ValidateFull(); err != nil {
+				return err
+			}
+			comment := "Полная анкета отправлена на окончательное решение"
+			if a.Status == domain.StatusNeedInfo {
+				comment = "Полная анкета уточнена и отправлена повторно"
+			}
+			return a.Transition(domain.StatusVerification, "client", comment, s.Now())
+		}
+		if !a.EditableQuick() {
+			return domain.ErrInvalidTransition
+		}
 		if err := a.ValidateForSubmit(); err != nil {
 			return err
 		}
-		comment := "Анкета отправлена"
+		comment := "Быстрая анкета отправлена на предварительное решение"
+		if !a.TwoLevel() {
+			comment = "Анкета отправлена"
+		}
 		if a.Status == domain.StatusNeedInfo {
 			comment = "Данные уточнены, анкета отправлена повторно"
 		}
+		a.Level = 1
 		a.Decision, a.Score, a.Factors, a.Checks = nil, nil, nil, []domain.Check{}
 		return a.Transition(domain.StatusSubmitted, "client", comment, s.Now())
 	})
-	s.audit(ctx, "application.submit", id, err, nil)
+	s.audit(ctx, "application.submit", id, err, map[string]any{"level": level})
 	return out, err
 }
 
 // Accept — клиент принимает предложение (одобрение или контрпредложение).
+// Предварительное решение открывает полную анкету (уровень 2), окончательное — подписание.
 func (s *Service) Accept(ctx context.Context, clientID, id string) (*domain.Application, error) {
-	if _, err := s.Get(ctx, clientID, id); err != nil {
+	cur, err := s.Get(ctx, clientID, id)
+	if err != nil {
 		return nil, err
 	}
+	if cur.Decision != nil && !cur.Decision.Final && (cur.Status == domain.StatusApproved || cur.Status == domain.StatusCounterOffer) {
+		director := ""
+		if cur.Company != nil {
+			director = cur.Company.Director
+		}
+		out, err := s.Repo.Update(ctx, id, func(a *domain.Application) error {
+			if a.Decision == nil || a.Decision.Final {
+				return domain.ErrInvalidTransition // решение успели поменять конкурентно
+			}
+			if err := a.Transition(domain.StatusFullForm, "client", "Предварительные условия приняты — осталось заполнить полную анкету", s.Now()); err != nil {
+				return err
+			}
+			a.StartFullForm(director)
+			return nil
+		})
+		s.audit(ctx, "application.accept_preliminary", id, err, nil)
+		return out, err
+	}
 	out, err := s.Repo.Update(ctx, id, func(a *domain.Application) error {
+		if a.Decision == nil || !a.Decision.Final {
+			return domain.ErrInvalidTransition
+		}
 		// Договор заключается ровно на условиях решения банка (и при одобрении, и при контрпредложении) —
 		// иначе график, выдача и платежи считались бы от параметров анкеты.
 		if err := a.Transition(domain.StatusSigning, "client", "Условия приняты, документы готовы к подписанию", s.Now()); err != nil {
@@ -279,7 +322,9 @@ func (s *Service) Pay(ctx context.Context, clientID, id string) (*domain.Applica
 	})
 	if err != nil && debited > 0 && !s.transactional() {
 		// файловый режим: деньги списаны, но заявка не сохранилась — возвращаем на счёт
-		_, _ = s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { u.Credit(debited); return nil })
+		if _, cerr := s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { u.Credit(debited); return nil }); cerr != nil {
+			obs.L(ctx).Error("pay compensation failed: debited amount not returned", "app", id, "amount", debited, "err", cerr)
+		}
 	}
 	s.audit(ctx, "loan.pay", id, err, map[string]any{"amount": debited})
 	if err != nil {
@@ -298,11 +343,6 @@ func (s *Service) Cancel(ctx context.Context, clientID, id string) (*domain.Appl
 	})
 	s.audit(ctx, "application.cancel", id, err, nil)
 	return out, err
-}
-
-// BankList — все заявки для сотрудника банка.
-func (s *Service) BankList(ctx context.Context) ([]*domain.Application, error) {
-	return s.Repo.List(ctx, storage.Filter{})
 }
 
 // BankPage — заявки для кабинета банка с поиском, фильтром и пагинацией.

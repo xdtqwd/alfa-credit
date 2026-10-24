@@ -79,8 +79,9 @@ type Repository interface {
 	Get(ctx context.Context, id string) (*domain.Application, error)
 	// Update выполняет fn атомарно (под блокировкой); при ошибке изменения откатываются.
 	Update(ctx context.Context, id string, fn func(a *domain.Application) error) (*domain.Application, error)
-	// List возвращает страницу заявок по фильтру и общее число подходящих (для X-Total-Count).
+	// List возвращает страницу заявок по фильтру (Limit/Offset).
 	List(ctx context.Context, f Filter) ([]*domain.Application, error)
+	// Count — сколько всего заявок подходит под фильтр без учёта страницы (для X-Total-Count).
 	Count(ctx context.Context, f Filter) (int, error)
 	Ping(ctx context.Context) error
 }

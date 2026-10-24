@@ -72,6 +72,50 @@ func TestLoginAndRegister(t *testing.T) {
 	}
 }
 
+// flakyUsers — хранилище пользователей, у которого можно «уронить» поиск или изменение.
+type flakyUsers struct {
+	storage.UserRepository
+	findErr, updateErr error
+}
+
+func (f flakyUsers) FindByPhone(ctx context.Context, phone string) (*domain.User, error) {
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	return f.UserRepository.FindByPhone(ctx, phone)
+}
+
+func (f flakyUsers) UpdateUser(ctx context.Context, id string, fn func(u *domain.User) error) (*domain.User, error) {
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+	return f.UserRepository.UpdateUser(ctx, id, fn)
+}
+
+func TestLoginReportsStorageErrors(t *testing.T) {
+	e := newEnv(t)
+	errDB := errors.New("db down")
+	// сбой поиска — это не «неверный пароль» и не попытка подбора: блокировки входа быть не должно
+	e.auth.Users = flakyUsers{UserRepository: e.users, findErr: errDB}
+	for range 5 {
+		if _, _, err := e.auth.Login(ctx, "79000000001", DemoPassword, "3.3.3.3"); !errors.Is(err, errDB) {
+			t.Fatalf("find failure: got %v, want %v", err, errDB)
+		}
+	}
+	// сбой записи времени входа — ошибка, а не паника на пустом пользователе
+	e.auth.Users = flakyUsers{UserRepository: e.users, updateErr: errDB}
+	if _, _, err := e.auth.Login(ctx, "79000000001", DemoPassword, "3.3.3.3"); !errors.Is(err, errDB) {
+		t.Fatalf("update failure: got %v, want %v", err, errDB)
+	}
+	e.auth.Users = e.users
+	if _, _, err := e.auth.Login(ctx, "79000000001", DemoPassword, "3.3.3.3"); err != nil {
+		t.Fatalf("login after storage recovery: %v", err)
+	}
+	if _, _, err := e.auth.Login(ctx, "79000000099", DemoPassword, "4.4.4.4"); !errors.Is(err, domain.ErrInvalidCredentials) {
+		t.Fatalf("unknown phone: got %v, want invalid credentials", err)
+	}
+}
+
 func TestCreatePrefillsAndClamps(t *testing.T) {
 	e := newEnv(t)
 	u := e.user(t, "79000000001")
@@ -112,7 +156,7 @@ func TestForeignApplicationIsInvisible(t *testing.T) {
 	}
 }
 
-// approve подводит заявку в статус approved напрямую (конвейер тестируется отдельно).
+// approve подводит заявку в статус approved с окончательным решением (конвейер тестируется отдельно).
 func approve(t *testing.T, e env, clientID string, amount int64, rate float64) *domain.Application {
 	t.Helper()
 	a, _ := e.svc.Create(ctx, clientID, CreateInput{ProductID: "business-dev", Amount: amount, TermMonths: 12})
@@ -122,7 +166,7 @@ func approve(t *testing.T, e env, clientID string, amount int64, rate float64) *
 				return err
 			}
 		}
-		d := domain.Decision{Type: domain.DecisionApproved}
+		d := domain.Decision{Type: domain.DecisionApproved, Final: true}
 		d.SetOffer(domain.NewQuote(amount, rate, 12))
 		x.Decision = &d
 		return nil
@@ -221,9 +265,53 @@ func TestAcceptCounterOfferAppliesNewTerms(t *testing.T) {
 		x.Decision = &d
 		return nil
 	})
+	// предварительное контрпредложение: условия фиксируются и открывается полная анкета
 	got, err := e.svc.Accept(ctx, u.ID, a.ID)
-	if err != nil || got.Amount != 10_000_000 || got.TermMonths != 36 || got.Status != domain.StatusSigning {
+	if err != nil || got.Amount != 10_000_000 || got.TermMonths != 36 || got.Status != domain.StatusFullForm || got.Level != 2 {
 		t.Fatalf("counter accept: %v %+v", err, got)
+	}
+	if got.Preliminary == nil || got.Preliminary.Rate != 21.4 || got.Full == nil || got.Full.Guarantor == nil {
+		t.Fatalf("preliminary terms must be kept, guarantor suggested for >5 mln: %+v %+v", got.Preliminary, got.Full)
+	}
+}
+
+func TestTwoLevelForm(t *testing.T) {
+	e := newEnv(t)
+	u := e.user(t, "79000000001")
+	a, _ := e.svc.Create(ctx, u.ID, CreateInput{ProductID: "business-dev", Amount: 2_000_000, TermMonths: 24})
+	e.repo.Update(ctx, a.ID, func(x *domain.Application) error {
+		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusApproved} {
+			x.Transition(s, "test", "", time.Now())
+		}
+		d := domain.Decision{Type: domain.DecisionApproved} // предварительное
+		d.SetOffer(domain.NewQuote(2_000_000, 19.9, 24))
+		x.Decision = &d
+		return nil
+	})
+	if _, err := e.svc.Sign(ctx, u.ID, a.ID, true); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Fatal("cannot sign on a preliminary decision")
+	}
+	got, err := e.svc.Accept(ctx, u.ID, a.ID)
+	if err != nil || got.Status != domain.StatusFullForm {
+		t.Fatalf("accept preliminary: %v %+v", err, got)
+	}
+	// быстрая анкета закрыта, правится только полная
+	amount := int64(9_000_000)
+	var ve *domain.ValidationError
+	if _, err := e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{Amount: &amount}); !errors.As(err, &ve) {
+		t.Fatalf("level-1 fields must be locked on level 2: %v", err)
+	}
+	if _, err := e.svc.Submit(ctx, u.ID, a.ID); !errors.As(err, &ve) || ve.Field != "full_form.employees" {
+		t.Fatalf("empty full form must not be submitted: %v", err)
+	}
+	full := domain.FullForm{Employees: 12, Premises: "rent", PurposeDetails: "Ремонт второго зала и закупка мебели",
+		Collateral: domain.Collateral{Type: domain.CollateralNone}, StatementsConsent: true}
+	if _, err := e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{FullForm: &full}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = e.svc.Submit(ctx, u.ID, a.ID)
+	if err != nil || got.Status != domain.StatusVerification || got.Preliminary == nil {
+		t.Fatalf("full form submit: %v %+v", err, got)
 	}
 }
 
@@ -263,5 +351,27 @@ func TestAcceptAlwaysUsesDecisionTerms(t *testing.T) {
 	}
 	if _, err := e.svc.Accept(ctx, u.ID, a.ID); !errors.Is(err, domain.ErrInvalidTransition) {
 		t.Fatal("double accept must be rejected")
+	}
+}
+
+func TestSeedDemoIsIdempotentAndAddsEmployee(t *testing.T) {
+	ctx := context.Background()
+	users, _ := storage.NewUserFileStore("")
+	a := &AuthService{Users: users, Registry: integrations.MockRegistry{}, Now: time.Now}
+	for range 2 {
+		if err := a.SeedDemo(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := users.CountUsers(ctx); n != len(DemoAccounts)+1 {
+		t.Fatalf("users = %d, want %d", n, len(DemoAccounts)+1)
+	}
+	e, err := users.FindByPhone(ctx, DemoEmployee.Phone)
+	if err != nil || !e.IsEmployee() || !e.Can(domain.PermViewAudit) || e.Company.INN != "" {
+		t.Fatalf("employee = %+v, %v", e, err)
+	}
+	c, _ := users.FindByPhone(ctx, DemoAccounts[0].Phone)
+	if c.IsEmployee() || c.Can(domain.PermViewApplications) {
+		t.Fatal("client must have no bank permissions")
 	}
 }

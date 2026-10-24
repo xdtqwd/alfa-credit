@@ -3,7 +3,7 @@ THIRD PARTY NOTICES — alfa-credit
 Runtime-зависимости
 -------------------
 Сервис написан на стандартной библиотеке Go плюс два драйвера (версии зафиксированы в go.mod/go.sum).
-Фронтенд — vanilla HTML/CSS/JS, без npm-пакетов и CDN; используются системные шрифты.
+Фронтенд — vanilla HTML/CSS/JS (ES-модули), без npm-пакетов, сборки и CDN; шрифт и иконки лежат в поставке.
 
 - Go toolchain 1.24 — BSD-3-Clause — https://go.dev/LICENSE
 - github.com/lib/pq v1.10.9 — MIT — https://github.com/lib/pq — драйвер PostgreSQL
@@ -19,16 +19,38 @@ Runtime-зависимости
 - apache/kafka:3.8.1 — Apache-2.0 — https://kafka.apache.org (режим KRaft, без ZooKeeper)
 - provectuslabs/kafka-ui:v0.7.2 — Apache-2.0 — https://github.com/provectus/kafka-ui (только профиль tools, по желанию)
 
-Иконки (включены в поставку)
----------------------------
+Шрифт, иконки и знак (включены в поставку)
+------------------------------------------
+- Styrene A Web (Thin, Light, Regular, Medium, Bold) — коммерческий шрифт Commercial Type (https://commercialtype.com).
+  Фирменный шрифт Альфа-Банка из макета главной в Figma; файлы woff2 предоставлены командой вместе с макетом.
+  В web/static/fonts/StyreneAWeb-{Thin,Light,Regular,Medium,Bold}.woff2 — файлы из архива без изменений;
+  используется на главной, в шапке сайта и подвале.
+  Распространение и публикация — только в рамках лицензии правообладателя.
+- Inter (variable, начертания 400–700) — SIL Open Font License 1.1 — https://github.com/rsms/inter
+  Шрифт кабинета и части блоков главной; из него же берутся знаки, которых нет в Styrene A Web (₽, —, кавычки, %, *, /, скобки и др.).
+  В web/static/fonts/ — подмножества woff2 (кириллица, латиница, latin-ext для знака ₽),
+  подключаются через @font-face с unicode-range.
 - @alfalab/icons-glyph 2.293.0 — MIT — https://github.com/core-ds/icons
-  Иконки дизайн-системы Альфа-Банка (Core Components), размер M 24×24. В web/static/icons.js
-  скопированы только SVG-пути 27 используемых иконок (Add, Calculator, Bank, Document, User, Wallet и др.).
+  Иконки дизайн-системы Альфа-Банка (Core Components), размер M 24×24. В web/static/js/ui/icons.js
+  скопированы только SVG-пути используемых иконок (Add, Calculator, Bank, Document, User, Wallet и др.).
+- @alfalab/icons-logo 1.63.0 — MIT — https://github.com/core-ds/icons
+  Знак «А» (AlfaBankSignMIcon) — логотип в шапке и иконка вкладки.
+
+Иллюстрации и иконки главной (web/static/img/landing/)
+------------------------------------------------------
+- Источник — архив дизайнера к макету главной в Figma («иконки и картинки итог 2»).
+- SVG без изменений, только латинские имена файлов: кольца шагов step-1…3.svg, «Паспорт» passport.svg,
+  «Залог» house.svg, иконки Icons8 (https://icons8.com): bolt.svg (молния), doc.svg (документ), scales.svg (весы),
+  wallet.svg (кошелёк), check.svg (ок), expand.svg (развернуть). Бесплатное использование Icons8 требует ссылки
+  на icons8.com.
+- 3D-иллюстрации — уменьшенные копии PNG из архива: hero.webp (credit-premium-final.png, 1040 px — вдвое больше
+  размера на странице), business-dev / working-capital / equipment / overdraft.webp (credit-*.png, 320 px).
+  WebP без потерь, прозрачность сохранена; уменьшены, чтобы страница не грузила 3,5 МБ PNG ради картинок 160–520 px.
 
 Ориентиры дизайна (код не включён)
 ----------------------------------
 - Core Components Альфа-Банка (@alfalab/core-components, MIT) — https://github.com/core-ds/core-components
-  Аккордеон (web/static/score.js) повторяет поведение @alfalab/core-components-accordion:
+  Аккордеон (web/static/js/ui/accordion.js) повторяет поведение @alfalab/core-components-accordion:
   заголовок + шеврон справа, анимация высоты 400 мс с теми же кривыми, отступ контента 12 px.
   Реализация своя, на vanilla JS, без React и без кода библиотеки.
 
@@ -54,4 +76,6 @@ Runtime-зависимости
 
 Бренд
 -----
-Цветовая палитра отсылает к Альфа-Банку — партнёру хакатона. Логотипы банка не используются.
+Альфа-Банк — партнёр хакатона. Палитра (красный #EF3124, Pantone 445 и Cool Grey 1), элемент
+«фундамент» и знак «А» взяты из открытого брендбука и пакета @alfalab/icons-logo; прототип
+не выдаёт себя за сервис банка — в подвале указано, что это демо хакатона на синтетических данных.

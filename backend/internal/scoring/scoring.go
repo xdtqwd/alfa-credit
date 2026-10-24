@@ -28,6 +28,7 @@ const (
 	ApproveThreshold = approveThreshold
 	RejectThreshold  = rejectThreshold
 	BaseScore        = baseScore
+	MaxDTI           = maxDTI
 )
 
 type Result struct {
@@ -98,7 +99,7 @@ func Evaluate(a *domain.Application, p domain.Product, br *domain.BureauReport, 
 	switch {
 	case dti <= 0.3:
 		add("Низкая долговая нагрузка", 80, load+" Это комфортная нагрузка.")
-	case dti <= 0.5:
+	case dti <= maxDTI:
 		add("Умеренная долговая нагрузка", 30, load+" Это в пределах нормы — до 50%.")
 	case dti <= 0.7:
 		add("Высокая долговая нагрузка", -40, load+" Это больше допустимых 50%: платить будет тяжело.")
