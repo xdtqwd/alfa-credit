@@ -12,6 +12,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -171,6 +172,10 @@ func (w *Worker) update(ctx context.Context, a *domain.Application, fn func(*dom
 
 func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	company, regErr := w.Registry.Lookup(ctx, a.INN)
+	var invalidINN *domain.ValidationError
+	if regErr != nil && !errors.Is(regErr, domain.ErrCompanyNotFound) && !errors.As(regErr, &invalidINN) {
+		return regErr // реестр недоступен — ретрай на следующем тике, а не отказ «компания не найдена»
+	}
 	report, bkiErr := w.Bureau.Report(ctx, a.INN)
 	if bkiErr != nil {
 		return bkiErr // ретрай на следующем тике
@@ -202,7 +207,7 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	if next == domain.StatusScoring && company.RevenueLastYear > 0 &&
 		float64(a.Financials.AnnualRevenue) > 1.5*float64(company.RevenueLastYear) {
 		checks = append(checks, chk("revenue", "Сверка выручки с ФНС", "warn",
-			fmt.Sprintf("Указано %s ₽, по данным ФНС — %s ₽", money(a.Financials.AnnualRevenue), money(company.RevenueLastYear))))
+			fmt.Sprintf("Указано %s, по данным ФНС — %s", domain.Money(a.Financials.AnnualRevenue), domain.Money(company.RevenueLastYear))))
 		next = domain.StatusNeedInfo
 		comment = "Уточните выручку: она заметно выше данных ФНС"
 		decision = &domain.Decision{Type: domain.DecisionNeedInfo,
@@ -281,7 +286,7 @@ func (w *Worker) verify(ctx context.Context, a *domain.Application) error {
 	case f.Collateral.Type == domain.CollateralNone && need:
 		checks = append(checks, chk("collateral", "Залог", "warn", "Без залога"))
 	case f.Collateral.Type == domain.CollateralNone:
-		checks = append(checks, chk("collateral", "Залог", "ok", fmt.Sprintf("Не нужен для суммы до %s", money(domain.SecurityRequiredFrom))))
+		checks = append(checks, chk("collateral", "Залог", "ok", fmt.Sprintf("Не нужен для суммы до %s", domain.GroupDigits(domain.SecurityRequiredFrom))))
 	case need && liquid*2 < a.Amount:
 		checks = append(checks, chk("collateral", "Залог", "warn", "Покрывает меньше половины кредита: "+f.Collateral.Describe()))
 	default:
@@ -366,24 +371,12 @@ func baseChecks(cs []domain.Check) []domain.Check {
 
 func resultFor(score int) string {
 	switch {
-	case score >= 650:
+	case score >= scoring.ApproveThreshold:
 		return "ok"
-	case score >= 500:
+	case score >= scoring.RejectThreshold:
 		return "warn"
 	}
 	return "fail"
-}
-
-func money(v int64) string {
-	s := fmt.Sprintf("%d", v)
-	out := []byte{}
-	for i, c := range []byte(s) {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			out = append(out, ' ')
-		}
-		out = append(out, c)
-	}
-	return string(out)
 }
 
 // Step выполняет один шаг конвейера для заявки (используется в тестах и ручном продвижении).

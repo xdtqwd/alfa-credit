@@ -71,25 +71,25 @@ func (r *Apps) Create(ctx context.Context, a *domain.Application) (*domain.Appli
 	return out, err
 }
 
-func (r *Apps) get(ctx context.Context, id string, lock bool) (*domain.Application, error) {
+// load читает документ заявки; lock — с блокировкой строки до конца транзакции.
+func (r *Apps) load(ctx context.Context, id string, lock bool) (doc []byte, clientID string, err error) {
 	q := `SELECT doc, client_id FROM applications WHERE id=$1`
 	if lock {
 		q += ` FOR UPDATE`
 	}
-	var doc []byte
-	var client string
-	err := r.q(ctx).QueryRowContext(ctx, q, id).Scan(&doc, &client)
+	err = r.q(ctx).QueryRowContext(ctx, q, id).Scan(&doc, &clientID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, domain.ErrNotFound
+		return nil, "", domain.ErrNotFound
 	}
+	return doc, clientID, err
+}
+
+func (r *Apps) Get(ctx context.Context, id string) (*domain.Application, error) {
+	doc, client, err := r.load(ctx, id, false)
 	if err != nil {
 		return nil, err
 	}
 	return decodeApp(doc, client)
-}
-
-func (r *Apps) Get(ctx context.Context, id string) (*domain.Application, error) {
-	return r.get(ctx, id, false)
 }
 
 // Update: SELECT … FOR UPDATE → fn → UPDATE + события в outbox, всё в одной транзакции.
@@ -97,21 +97,29 @@ func (r *Apps) Get(ctx context.Context, id string) (*domain.Application, error) 
 func (r *Apps) Update(ctx context.Context, id string, fn func(a *domain.Application) error) (*domain.Application, error) {
 	var out *domain.Application
 	err := r.InTx(ctx, func(ctx context.Context) error {
-		before, err := r.get(ctx, id, true)
+		doc, client, err := r.load(ctx, id, true)
 		if err != nil {
 			return err
 		}
-		cur, _ := decodeApp(mustJSON(before), before.ClientID)
+		// две независимые копии одного документа: before — для событий outbox, cur — под изменение
+		before, err := decodeApp(doc, client)
+		if err != nil {
+			return err
+		}
+		cur, err := decodeApp(doc, client)
+		if err != nil {
+			return err
+		}
 		if err := fn(cur); err != nil {
 			return err
 		}
-		doc, err := encodeApp(cur)
+		next, err := encodeApp(cur)
 		if err != nil {
 			return err
 		}
 		if _, err := r.q(ctx).ExecContext(ctx, `UPDATE applications SET status=$2, product_id=$3, inn=$4, company_name=$5, doc=$6,
 			version=version+1, updated_at=$7, status_changed_at=$8 WHERE id=$1`,
-			id, string(cur.Status), cur.ProductID, cur.INN, companyName(cur), doc, cur.UpdatedAt, cur.StatusChangedAt); err != nil {
+			id, string(cur.Status), cur.ProductID, cur.INN, companyName(cur), next, cur.UpdatedAt, cur.StatusChangedAt); err != nil {
 			return err
 		}
 		if err := r.writeOutbox(ctx, events.FromChange(before, cur, obs.RequestID(ctx))); err != nil {
@@ -122,8 +130,6 @@ func (r *Apps) Update(ctx context.Context, id string, fn func(a *domain.Applicat
 	})
 	return out, err
 }
-
-func mustJSON(a *domain.Application) []byte { b, _ := json.Marshal(a); return b }
 
 func where(f storage.Filter) (string, []any) {
 	var conds []string

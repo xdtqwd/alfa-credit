@@ -132,16 +132,42 @@ func (r *Registry) CounterValue(name string, labels ...string) int64 {
 	return 0
 }
 
+// CounterTotal — сумма счётчика по всем сочетаниям меток (для кабинета банка).
+func (r *Registry) CounterTotal(name string) int64 {
+	r.mu.Lock()
+	c, ok := r.counts[name]
+	r.mu.Unlock()
+	if !ok {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var total int64
+	for _, n := range c.m {
+		total += n.Load()
+	}
+	return total
+}
+
 // WriteText пишет все метрики в формате Prometheus.
 func (r *Registry) WriteText(w io.Writer) {
+	// карты имён читаются только под r.mu: параллельно Add/Observe могут регистрировать новые метрики
 	r.mu.Lock()
 	cn := sortedKeys(r.counts)
 	hn := sortedKeys(r.hists)
+	counts := make([]*counterVec, len(cn))
+	for i, name := range cn {
+		counts[i] = r.counts[name]
+	}
+	hists := make([]*histVec, len(hn))
+	for i, name := range hn {
+		hists[i] = r.hists[name]
+	}
 	gs := append([]gaugeFunc(nil), r.gauges...)
 	r.mu.Unlock()
 
-	for _, name := range cn {
-		c := r.counts[name]
+	for i, name := range cn {
+		c := counts[i]
 		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s counter\n", name, c.help, name)
 		c.mu.Lock()
 		for _, k := range sortedKeys(c.m) {
@@ -149,8 +175,8 @@ func (r *Registry) WriteText(w io.Writer) {
 		}
 		c.mu.Unlock()
 	}
-	for _, name := range hn {
-		h := r.hists[name]
+	for i, name := range hn {
+		h := hists[i]
 		fmt.Fprintf(w, "# HELP %s %s\n# TYPE %s histogram\n", name, h.help, name)
 		h.mu.Lock()
 		for _, k := range sortedKeys(h.m) {

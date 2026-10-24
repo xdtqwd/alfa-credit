@@ -490,7 +490,9 @@ func (s *Server) idempotent(h http.HandlerFunc) http.HandlerFunc {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Second)
 		defer cancel()
 		if cw.code >= 500 || cw.code == 0 {
-			_ = s.Idem.Release(ctx, scope, key)
+			if err := s.Idem.Release(ctx, scope, key); err != nil {
+				obs.L(r.Context()).Error("idempotency release failed", "err", err)
+			}
 			return
 		}
 		if err := s.Idem.Complete(ctx, scope, key, cw.code, cw.buf.Bytes()); err != nil {

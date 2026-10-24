@@ -59,7 +59,8 @@ func NewQuote(amount int64, annualRate float64, months int) Quote {
 
 // ---------- форматирование для объяснений клиенту ----------
 
-func Money(v int64) string {
+// GroupDigits разбивает число на разряды пробелами: 18000000 → «18 000 000».
+func GroupDigits(v int64) string {
 	s := fmt.Sprintf("%d", v)
 	var b strings.Builder
 	for i, c := range s {
@@ -68,8 +69,10 @@ func Money(v int64) string {
 		}
 		b.WriteRune(c)
 	}
-	return b.String() + " ₽"
+	return b.String()
 }
+
+func Money(v int64) string { return GroupDigits(v) + " ₽" }
 
 func Months(n int) string {
 	m, h := n%10, n%100

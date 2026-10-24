@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xdtqwd/alfa-credit/internal/auth"
@@ -59,12 +60,8 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*domain.U
 		return nil, "", err
 	}
 	now := s.Now()
-	pos := "Генеральный директор"
-	if company.Type == "ИП" {
-		pos = "Индивидуальный предприниматель"
-	}
 	u := &domain.User{
-		ID: newID(), Role: domain.RoleClient, Phone: phone, FullName: strings.TrimSpace(in.FullName), Position: pos, Email: in.Email,
+		ID: newID(), Role: domain.RoleClient, Phone: phone, FullName: strings.TrimSpace(in.FullName), Position: positionFor(company), Email: in.Email,
 		PasswordHash: hash, Company: *company, Requisites: RequisitesFor(company),
 		Balance: 250_000, CreatedAt: now, LastLoginAt: now,
 	}
@@ -82,6 +79,13 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*domain.U
 	return u, tok, nil
 }
 
+// dummyPasswordHash — с ним сверяется пароль, когда телефона нет среди пользователей: проверка идёт
+// так же долго, как для настоящего аккаунта, и по времени ответа не узнать, зарегистрирован ли номер.
+var dummyPasswordHash = sync.OnceValue(func() string {
+	h, _ := auth.HashPassword("no-such-user")
+	return h
+})
+
 // Login — вход по телефону и паролю с защитой от перебора.
 func (s *AuthService) Login(ctx context.Context, phoneRaw, password, ip string) (*domain.User, string, error) {
 	phone := domain.NormalizePhone(phoneRaw)
@@ -90,14 +94,24 @@ func (s *AuthService) Login(ctx context.Context, phoneRaw, password, ip string) 
 		return nil, "", domain.ErrTooManyAttempts
 	}
 	u, err := s.Users.FindByPhone(ctx, phone)
-	if err != nil || !auth.VerifyPassword(u.PasswordHash, password) {
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return nil, "", err // сбой хранилища — не «неверный пароль» и не попытка подбора
+	}
+	hash := dummyPasswordHash()
+	if u != nil {
+		hash = u.PasswordHash
+	}
+	if !auth.VerifyPassword(hash, password) || u == nil {
 		s.Limiter.Fail("p:" + phone)
 		s.Limiter.Fail("ip:" + ip)
 		s.audit(ctx, "auth.login", "", "denied", map[string]any{"reason": "invalid_credentials", "phone": obs.MaskPhone(phone), "ip": ip})
 		return nil, "", domain.ErrInvalidCredentials
 	}
 	s.Limiter.Reset("p:" + phone)
-	u, _ = s.Users.UpdateUser(ctx, u.ID, func(x *domain.User) error { x.LastLoginAt = s.Now(); return nil })
+	u, err = s.Users.UpdateUser(ctx, u.ID, func(x *domain.User) error { x.LastLoginAt = s.Now(); return nil })
+	if err != nil {
+		return nil, "", err
+	}
 	s.audit(ctx, "auth.login", u.ID, "ok", map[string]any{"ip": ip})
 	tok, err := s.Sessions.Create(ctx, u.ID)
 	if err != nil {
@@ -135,6 +149,14 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, p Profil
 		}
 		return nil
 	})
+}
+
+// positionFor — должность представителя бизнеса по типу компании.
+func positionFor(c *domain.Company) string {
+	if c.Type == "ИП" {
+		return "Индивидуальный предприниматель"
+	}
+	return "Генеральный директор"
 }
 
 // RequisitesFor генерирует детерминированные синтетические реквизиты по ИНН.
@@ -207,12 +229,8 @@ func (s *AuthService) SeedDemo(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		pos := "Генеральный директор"
-		if c.Type == "ИП" {
-			pos = "Индивидуальный предприниматель"
-		}
 		if err := create(&domain.User{
-			ID: newID(), Role: domain.RoleClient, Phone: d.Phone, FullName: d.FullName, Position: pos,
+			ID: newID(), Role: domain.RoleClient, Phone: d.Phone, FullName: d.FullName, Position: positionFor(c),
 			Email:   "demo" + d.Phone[len(d.Phone)-1:] + "@example.com",
 			Company: *c, Requisites: RequisitesFor(c), Balance: d.Balance, CreatedAt: s.Now(),
 		}); err != nil {

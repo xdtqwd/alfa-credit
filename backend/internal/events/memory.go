@@ -21,7 +21,6 @@ type Memory struct {
 
 	mu     sync.Mutex
 	groups map[string][]*memGroup // topic → группы
-	wg     sync.WaitGroup
 }
 
 type memGroup struct {
