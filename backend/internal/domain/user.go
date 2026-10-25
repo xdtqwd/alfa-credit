@@ -56,8 +56,10 @@ type User struct {
 	Requisites   Requisites `json:"requisites"`
 	Balance      int64      `json:"balance"` // остаток на расчётном счёте, ₽
 	Employee     *Employee  `json:"employee,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	LastLoginAt  time.Time  `json:"last_login_at"`
+	// Identity — личность из Госуслуг (ЕСИА): появляется после входа через Госуслуги, нужна для заявки.
+	Identity    *Identity `json:"identity,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastLoginAt time.Time `json:"last_login_at"`
 }
 
 // IsEmployee — сотрудник банка. Роль проверяется на сервере при каждом запросе к разделам.

@@ -35,13 +35,13 @@ func newHarness(t *testing.T, opts ...func(*Server)) *harness {
 	users, _ := storage.NewUserFileStore("")
 	reg := integrations.MockRegistry{}
 	svc := &service.Service{Repo: repo, Users: users, Registry: reg, Now: time.Now}
-	a := &service.AuthService{Users: users, Registry: reg, Now: time.Now, Sessions: auth.NewSessions(time.Hour), Limiter: auth.NewLimiter(5, time.Minute)}
+	a := &service.AuthService{Users: users, Registry: reg, ESIA: integrations.MockESIA{}, Now: time.Now, Sessions: auth.NewSessions(time.Hour), Limiter: auth.NewLimiter(5, time.Minute)}
 	if err := a.SeedDemo(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	static := fstest.MapFS{"index.html": {Data: []byte("<!doctype html>")}}
-	srv := &Server{Svc: svc, Auth: a, Repo: repo, Log: log, BankToken: "bank-secret", Static: static}
+	srv := &Server{Svc: svc, Auth: a, Repo: repo, Log: log, BankToken: "bank-secret", Static: static, DemoESIA: true}
 	for _, o := range opts {
 		o(srv)
 	}
@@ -79,12 +79,37 @@ func (h *harness) do(c *http.Client, method, path string, body any, hdr map[stri
 	return resp, out
 }
 
+// esiaPerson — демо-учётка Госуслуг руководителя компании демо-клиента.
+var esiaPerson = map[string]string{"79000000001": "esia-1", "79000000002": "esia-2", "79000000003": "esia-3", "79000000004": "esia-4"}
+
+// login — клиент входит через Госуслуги (иначе заявку не подать), сотрудник банка — по паролю.
 func (h *harness) login(phone string) *http.Client {
 	c := h.client()
-	if r, b := h.do(c, "POST", "/api/v1/auth/login", map[string]string{"phone": phone, "password": service.DemoPassword}, nil); r.StatusCode != 200 {
+	r, b := h.do(c, "POST", "/api/v1/auth/login", map[string]string{"phone": phone, "password": service.DemoPassword}, nil)
+	if id, ok := esiaPerson[phone]; ok {
+		r, b = h.do(c, "POST", "/api/v1/auth/esia", map[string]string{"person_id": id}, nil)
+	}
+	if r.StatusCode != 200 {
 		h.t.Fatalf("login %s: %d %s", phone, r.StatusCode, b)
 	}
 	return c
+}
+
+// level1 — данные 1-го уровня для создания заявки «Северного ветра»; 0 — значения продукта по умолчанию.
+func level1(product string, amount int64, term int) map[string]any {
+	return level1For("7701234567", 80_000_000, product, amount, term)
+}
+
+func level1For(inn string, revenue int64, product string, amount int64, term int) map[string]any {
+	p, _ := domain.FindProduct(product)
+	if amount == 0 {
+		amount = p.DefaultAmt
+	}
+	if term == 0 {
+		term = p.DefaultTerm
+	}
+	return map[string]any{"product_id": product, "amount": amount, "term_months": term, "inn": inn,
+		"financials": map[string]any{"annual_revenue": revenue}}
 }
 
 func TestProtectedEndpointsRequireLogin(t *testing.T) {
@@ -134,7 +159,7 @@ func TestSessionCookieFlags(t *testing.T) {
 func TestCannotAccessForeignApplication(t *testing.T) {
 	h := newHarness(t)
 	alice, bob := h.login("79000000001"), h.login("79000000002")
-	_, b := h.do(alice, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, nil)
+	_, b := h.do(alice, "POST", "/api/v1/applications", level1("business-dev", 0, 0), nil)
 	var a domain.Application
 	json.Unmarshal(b, &a)
 	for _, ep := range [][2]string{{"GET", ""}, {"PATCH", ""}, {"POST", "/submit"}, {"POST", "/cancel"}, {"POST", "/pay"}} {
@@ -151,10 +176,10 @@ func TestCannotAccessForeignApplication(t *testing.T) {
 func TestCSRFForeignOriginRejected(t *testing.T) {
 	h := newHarness(t)
 	c := h.login("79000000001")
-	if r, _ := h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, map[string]string{"Origin": "https://evil.example"}); r.StatusCode != 403 {
+	if r, _ := h.do(c, "POST", "/api/v1/applications", level1("business-dev", 0, 0), map[string]string{"Origin": "https://evil.example"}); r.StatusCode != 403 {
 		t.Fatalf("cross-origin POST = %d, want 403", r.StatusCode)
 	}
-	if r, _ := h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, map[string]string{"Origin": h.ts.URL}); r.StatusCode != 201 {
+	if r, _ := h.do(c, "POST", "/api/v1/applications", level1("business-dev", 0, 0), map[string]string{"Origin": h.ts.URL}); r.StatusCode != 201 {
 		t.Fatalf("same-origin POST = %d, want 201", r.StatusCode)
 	}
 }
@@ -210,7 +235,7 @@ func TestBankEndpointToken(t *testing.T) {
 func TestSecurityHeadersAndQuoteInResponses(t *testing.T) {
 	h := newHarness(t)
 	c := h.login("79000000001")
-	r, b := h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev", "amount": 3_000_000, "term_months": 24}, nil)
+	r, b := h.do(c, "POST", "/api/v1/applications", level1("business-dev", 3_000_000, 24), nil)
 	for _, hd := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "X-Request-ID"} {
 		if r.Header.Get(hd) == "" {
 			t.Fatalf("missing header %s", hd)
@@ -235,7 +260,7 @@ func TestConcurrentPaymentsConsistent(t *testing.T) {
 	h := newHarness(t)
 	c := h.login("79000000001")
 	u, _ := h.users.FindByPhone(t.Context(), "79000000001")
-	_, b := h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "working-capital", "amount": 300_000, "term_months": 3}, nil)
+	_, b := h.do(c, "POST", "/api/v1/applications", level1("working-capital", 300_000, 3), nil)
 	var a domain.Application
 	json.Unmarshal(b, &a)
 	h.repo.Update(t.Context(), a.ID, func(x *domain.Application) error {
@@ -279,7 +304,7 @@ func TestConcurrentSignCreditsOnce(t *testing.T) {
 	h := newHarness(t)
 	c := h.login("79000000001")
 	u, _ := h.users.FindByPhone(t.Context(), "79000000001")
-	_, b := h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev", "amount": 1_000_000, "term_months": 12}, nil)
+	_, b := h.do(c, "POST", "/api/v1/applications", level1("business-dev", 1_000_000, 12), nil)
 	var a domain.Application
 	json.Unmarshal(b, &a)
 	h.repo.Update(t.Context(), a.ID, func(x *domain.Application) error {
@@ -303,5 +328,34 @@ func TestConcurrentSignCreditsOnce(t *testing.T) {
 	after, _ := h.users.GetUser(t.Context(), u.ID)
 	if after.Balance != u.Balance+1_000_000 {
 		t.Fatalf("credited %d, want exactly 1 000 000", after.Balance-u.Balance)
+	}
+}
+
+// Демо-вход через Госуслуги — только в демо-режиме; окно выбора учётки не раскрывает паспорта.
+// Предварительный расчёт и демо-список компаний доступны без входа.
+func TestGosuslugiAndPrescoreEndpoints(t *testing.T) {
+	prod := newHarness(t, func(s *Server) { s.DemoESIA = false })
+	for _, ep := range [][2]string{{"GET", "/api/v1/esia/persons"}, {"POST", "/api/v1/auth/esia"}} {
+		if r, _ := prod.do(prod.client(), ep[0], ep[1], map[string]string{"person_id": "esia-1"}, nil); r.StatusCode != 404 {
+			t.Fatalf("%s %s outside demo mode = %d, want 404", ep[0], ep[1], r.StatusCode)
+		}
+	}
+	h := newHarness(t)
+	anon := h.client()
+	r, b := h.do(anon, "GET", "/api/v1/esia/persons", nil, nil)
+	if r.StatusCode != 200 || !strings.Contains(string(b), "Северный ветер") || strings.Contains(string(b), "345678") || strings.Contains(string(b), "passport") {
+		t.Fatalf("persons: %d %s", r.StatusCode, b)
+	}
+	if r, b := h.do(anon, "POST", "/api/v1/prescore", level1("business-dev", 3_000_000, 24), nil); r.StatusCode != 200 || !strings.Contains(string(b), `"type":"approved"`) {
+		t.Fatalf("prescore without login: %d %s", r.StatusCode, b)
+	}
+	if r, b := h.do(anon, "POST", "/api/v1/prescore", level1For("12x", 1, "business-dev", 3_000_000, 24), nil); r.StatusCode != 422 {
+		t.Fatalf("invalid prescore input: %d %s", r.StatusCode, b)
+	}
+	if r, b := h.do(anon, "GET", "/api/v1/demo/companies", nil, nil); r.StatusCode != 200 || !strings.Contains(string(b), "7701234567") {
+		t.Fatalf("demo companies: %d %s", r.StatusCode, b)
+	}
+	if r, _ := h.do(anon, "POST", "/api/v1/auth/esia", map[string]string{"person_id": "esia-404"}, nil); r.StatusCode != 422 {
+		t.Fatalf("unknown Gosuslugi person = %d, want 422", r.StatusCode)
 	}
 }

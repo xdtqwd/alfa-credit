@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
+	"fmt"
 	"time"
 
 	"github.com/xdtqwd/alfa-credit/internal/domain"
@@ -55,48 +55,47 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
-type CreateInput struct {
-	ProductID  string `json:"product_id"`
-	Amount     int64  `json:"amount"`
-	TermMonths int    `json:"term_months"`
-}
-
-// Create — сразу создаёт черновик анкеты с параметрами из калькулятора
-// (без промежуточного шага «оставить заявку»).
-func (s *Service) Create(ctx context.Context, clientID string, in CreateInput) (*domain.Application, error) {
-	p, ok := domain.FindProduct(in.ProductID)
-	if !ok {
-		return nil, &domain.ValidationError{Field: "product_id", Message: "неизвестный продукт"}
+// Create — заявка создаётся после входа через Госуслуги (начало 2-го уровня). Данные 1-го уровня
+// проверяются заново: предварительный расчёт считает сервер, а не присылает браузер.
+func (s *Service) Create(ctx context.Context, clientID string, in domain.Level1) (*domain.Application, error) {
+	u, err := s.Users.GetUser(ctx, clientID)
+	if err != nil {
+		return nil, err
 	}
-	if in.Amount == 0 {
-		in.Amount = p.DefaultAmt
+	if u.Identity == nil {
+		return nil, &domain.ValidationError{Field: "identity", Message: "войдите через Госуслуги — без подтверждённой личности заявку не подать"}
 	}
-	if in.TermMonths == 0 {
-		in.TermMonths = p.DefaultTerm
+	if u.Company.INN != in.INN {
+		return nil, &domain.ValidationError{Field: "inn", Message: fmt.Sprintf("%s по данным ЕГРЮЛ не руководит компанией с ИНН %s — войдите через Госуслуги от имени её руководителя", u.FullName, in.INN)}
 	}
-	in.Amount = max(p.MinAmount, min(p.MaxAmount, in.Amount))
-	in.TermMonths = max(p.MinTerm, min(p.MaxTerm, in.TermMonths))
+	pre, err := s.Prescore(ctx, &in)
+	if err != nil {
+		return nil, err
+	}
+	if t := pre.Decision.Type; t != domain.DecisionApproved && t != domain.DecisionCounter {
+		return nil, &domain.ValidationError{Field: "prescore", Message: "по предварительному расчёту кредит не одобрен — измените условия на 1-м уровне"}
+	}
 
 	now := s.Now()
+	verdict := "одобрено"
+	if pre.Decision.Type == domain.DecisionCounter {
+		verdict = "одобрено на других условиях"
+	}
 	a := &domain.Application{
-		ID: newID(), ClientID: clientID, ProductID: p.ID,
-		Amount: in.Amount, TermMonths: in.TermMonths, Purpose: p.Purposes[0],
-		Status: domain.StatusDraft, Checks: []domain.Check{}, Payments: []domain.Payment{},
-		History:   []domain.Event{{Status: domain.StatusDraft, At: now, Actor: "client", Comment: "Анкета создана из калькулятора"}},
+		ID: newID(), ClientID: clientID, ProductID: in.ProductID,
+		Amount: in.Amount, TermMonths: in.TermMonths, Purpose: in.Purpose,
+		INN: in.INN, Company: pre.Company, Financials: in.Financials,
+		Contact: domain.Contact{FullName: u.FullName, Position: u.Position, Phone: "+" + u.Phone, Email: u.Email},
+		Status:  domain.StatusFullForm, Checks: pre.Checks, Score: pre.Score, Factors: pre.Factors, Payments: []domain.Payment{},
+		History: []domain.Event{{Status: domain.StatusFullForm, At: now, Actor: "client",
+			Comment: "Предварительный расчёт: " + verdict + ". Личность подтверждена через Госуслуги — осталось приложить документы"}},
 		CreatedAt: now, UpdatedAt: now, StatusChangedAt: now,
 	}
-	// Предзаполнение из профиля: компания, реквизиты и контакт уже известны банку после входа.
-	if s.Users != nil {
-		if u, err := s.Users.GetUser(ctx, clientID); err == nil {
-			c := u.Company
-			a.INN, a.Company = c.INN, &c
-			a.Contact = domain.Contact{FullName: u.FullName, Position: u.Position, Phone: "+" + u.Phone, Email: u.Email}
-			a.History[0].Comment = "Анкета создана из калькулятора, данные компании взяты из профиля"
-		}
-	}
+	id := *u.Identity
+	a.StartLevel2(pre.Decision, &id)
 	out, err := s.Repo.Create(ctx, a)
 	if err == nil {
-		s.audit(ctx, "application.create", out.ID, nil, map[string]any{"number": out.Number, "product": out.ProductID, "amount": out.Amount, "term": out.TermMonths})
+		s.audit(ctx, "application.create", out.ID, nil, map[string]any{"number": out.Number, "product": out.ProductID, "amount": out.Amount, "term": out.TermMonths, "prescore": string(pre.Decision.Type)})
 	}
 	return out, err
 }
@@ -135,97 +134,41 @@ func (s *Service) LookupCompany(ctx context.Context, inn string) (*domain.Compan
 	return s.Registry.Lookup(ctx, inn)
 }
 
-// Patch — автосохранение анкеты. При вводе ИНН подтягивает данные компании из реестра.
+// Patch — автосохранение 2-го уровня анкеты.
 func (s *Service) Patch(ctx context.Context, clientID, id string, p domain.DraftPatch) (*domain.Application, error) {
 	if _, err := s.Get(ctx, clientID, id); err != nil {
 		return nil, err
 	}
-	if s.Users != nil {
-		p.INN = nil // ИНН фиксирован профилем: заявка подаётся только от своей компании
-	}
-	var company *domain.Company
-	innChanged := p.INN != nil
-	if innChanged && domain.ValidINN(*p.INN) {
-		c, err := s.Registry.Lookup(ctx, *p.INN)
-		if err != nil && !errors.Is(err, domain.ErrCompanyNotFound) {
-			return nil, err
-		}
-		company = c
-	}
-	return s.Repo.Update(ctx, id, func(a *domain.Application) error {
-		if err := a.ApplyPatch(p, s.Now()); err != nil {
-			return err
-		}
-		if innChanged {
-			a.Company = company
-		}
-		return nil
-	})
+	return s.Repo.Update(ctx, id, func(a *domain.Application) error { return a.ApplyPatch(p, s.Now()) })
 }
 
+// Submit — 2-й уровень уходит на полный скоринг: проверки с кредитной историей и окончательное решение.
 func (s *Service) Submit(ctx context.Context, clientID, id string) (*domain.Application, error) {
 	if _, err := s.Get(ctx, clientID, id); err != nil {
 		return nil, err
 	}
-	level := 1
 	out, err := s.Repo.Update(ctx, id, func(a *domain.Application) error {
-		if a.EditableFull() {
-			// уровень 2: полная анкета уходит на окончательное решение; предварительное решение и проверки остаются
-			level = 2
-			if err := a.ValidateFull(); err != nil {
-				return err
-			}
-			comment := "Полная анкета отправлена на окончательное решение"
-			if a.Status == domain.StatusNeedInfo {
-				comment = "Полная анкета уточнена и отправлена повторно"
-			}
-			return a.Transition(domain.StatusVerification, "client", comment, s.Now())
-		}
-		if !a.EditableQuick() {
+		if !a.EditableFull() {
 			return domain.ErrInvalidTransition
 		}
-		if err := a.ValidateForSubmit(); err != nil {
+		if err := a.ValidateFull(s.Now()); err != nil {
 			return err
 		}
-		comment := "Быстрая анкета отправлена на предварительное решение"
-		if !a.TwoLevel() {
-			comment = "Анкета отправлена"
-		}
+		comment := "Документы отправлены на полный скоринг"
 		if a.Status == domain.StatusNeedInfo {
-			comment = "Данные уточнены, анкета отправлена повторно"
+			comment = "Данные уточнены и отправлены повторно"
 		}
-		a.Level = 1
-		a.Decision, a.Score, a.Factors, a.Checks = nil, nil, nil, []domain.Check{}
+		a.Decision, a.Checks = nil, []domain.Check{}
 		return a.Transition(domain.StatusSubmitted, "client", comment, s.Now())
 	})
-	s.audit(ctx, "application.submit", id, err, map[string]any{"level": level})
+	s.audit(ctx, "application.submit", id, err, nil)
 	return out, err
 }
 
-// Accept — клиент принимает предложение (одобрение или контрпредложение).
-// Предварительное решение открывает полную анкету (уровень 2), окончательное — подписание.
+// Accept — клиент принимает окончательное решение (одобрение или другие условия) и переходит к подписанию.
 func (s *Service) Accept(ctx context.Context, clientID, id string) (*domain.Application, error) {
-	cur, err := s.Get(ctx, clientID, id)
-	if err != nil {
+	if _, err := s.Get(ctx, clientID, id); err != nil {
 		return nil, err
-	}
-	if cur.Decision != nil && !cur.Decision.Final && (cur.Status == domain.StatusApproved || cur.Status == domain.StatusCounterOffer) {
-		director := ""
-		if cur.Company != nil {
-			director = cur.Company.Director
-		}
-		out, err := s.Repo.Update(ctx, id, func(a *domain.Application) error {
-			if a.Decision == nil || a.Decision.Final {
-				return domain.ErrInvalidTransition // решение успели поменять конкурентно
-			}
-			if err := a.Transition(domain.StatusFullForm, "client", "Предварительные условия приняты — осталось заполнить полную анкету", s.Now()); err != nil {
-				return err
-			}
-			a.StartFullForm(director)
-			return nil
-		})
-		s.audit(ctx, "application.accept_preliminary", id, err, nil)
-		return out, err
 	}
 	out, err := s.Repo.Update(ctx, id, func(a *domain.Application) error {
 		if a.Decision == nil || !a.Decision.Final {
@@ -236,7 +179,7 @@ func (s *Service) Accept(ctx context.Context, clientID, id string) (*domain.Appl
 		if err := a.Transition(domain.StatusSigning, "client", "Условия приняты, документы готовы к подписанию", s.Now()); err != nil {
 			return err
 		}
-		if a.Decision != nil && a.Decision.Amount > 0 && a.Decision.TermMonths > 0 {
+		if a.Decision.Amount > 0 && a.Decision.TermMonths > 0 {
 			a.Amount, a.TermMonths = a.Decision.Amount, a.Decision.TermMonths
 		}
 		return nil

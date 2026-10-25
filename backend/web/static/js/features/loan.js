@@ -1,22 +1,30 @@
 // Действия с кредитом: оформить заявку, подписать договор, оплатить платёж, скопировать реквизиты.
 import { api } from '../core/api.js';
-import { $, copyText } from '../core/dom.js';
+import { $, copyText, storage } from '../core/dom.js';
 import { esc, rub, months, rate } from '../core/format.js';
 import { navigate } from '../core/router.js';
-import { session, putApp, refresh } from '../core/session.js';
+import { session, putApp, refresh, product, isStaff } from '../core/session.js';
 import { openModal, toast } from '../ui/feedback.js';
-import { requireAuth } from './auth.js';
 
-/** Сразу создаёт черновик анкеты с параметрами калькулятора — без шага «оставить заявку». */
-export async function startApplication(productId, amount = 0, term = 0) {
-  if (!(await requireAuth('Чтобы оформить кредит, войдите — данные компании и реквизиты подставим из профиля.'))) return;
-  try {
-    const a = await api('POST', '/applications', { product_id: productId, amount, term_months: term });
-    putApp(a);
-    navigate(`/cabinet/applications/${a.id}`);
-  } catch (e) {
-    toast(e.message, { error: true });
+/**
+ * «Оформить» — открывает 1-й уровень анкеты (предварительный расчёт, без входа). Кредит из карточки
+ * продукта или с параметрами калькулятора сохраняется; без продукта клиент выбирает кредит сам.
+ */
+export function startApplication(productId = null, amount = 0, term = 0, inn = '') {
+  if (isStaff()) {
+    toast('Кредит оформляет представитель компании — вы вошли как сотрудник банка', { error: true });
+    return;
   }
+  const prev = storage.get('apply', {});
+  const p = productId ? product(productId) : null;
+  storage.set('apply', {
+    ...prev,
+    product_id: p?.id || null,
+    amount: p ? amount || p.default_amount : 0,
+    term_months: p ? term || p.default_term : 0,
+    inn: inn || prev.inn || '',
+  });
+  navigate('/apply');
 }
 
 /** Подписание простой электронной подписью. Возвращает обновлённую заявку или null. */

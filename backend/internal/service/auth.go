@@ -19,6 +19,7 @@ import (
 type AuthService struct {
 	Users    storage.UserRepository
 	Registry integrations.Registry
+	ESIA     integrations.ESIA // nil — вход через Госуслуги выключен
 	Sessions auth.SessionStore
 	Limiter  *auth.Limiter
 	Now      func() time.Time
@@ -113,6 +114,66 @@ func (s *AuthService) Login(ctx context.Context, phoneRaw, password, ip string) 
 		return nil, "", err
 	}
 	s.audit(ctx, "auth.login", u.ID, "ok", map[string]any{"ip": ip})
+	tok, err := s.Sessions.Create(ctx, u.ID)
+	if err != nil {
+		return nil, "", err
+	}
+	return u, tok, nil
+}
+
+// ESIAPersons — учётные записи для демо-окна Госуслуг: кто это и какой компанией руководит.
+func (s *AuthService) ESIAPersons(ctx context.Context) []integrations.ESIAPersonView {
+	var out []integrations.ESIAPersonView
+	for _, p := range s.ESIA.Persons(ctx) {
+		v := integrations.ESIAPersonView{ID: p.ID, FullName: p.Identity.FullName, SNILS: integrations.MaskSNILS(p.Identity.SNILS), CompanyINN: p.CompanyINN}
+		if c, err := s.Registry.Lookup(ctx, p.CompanyINN); err == nil {
+			v.CompanyName, v.Role = c.Name, positionFor(c)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// ESIALogin — вход через Госуслуги (ЕСИА). Личность подтверждена Госуслугами, поэтому пароль не нужен:
+// аккаунт находим по подтверждённому телефону, а если его нет — создаём (компания — из реестра по ИНН,
+// которым человек руководит). Личность сохраняется в профиле: без неё заявку не подать.
+func (s *AuthService) ESIALogin(ctx context.Context, personID, ip string) (*domain.User, string, error) {
+	if s.Limiter.Blocked("ip:" + ip) {
+		return nil, "", domain.ErrTooManyAttempts
+	}
+	p, ok := s.ESIA.Person(ctx, personID)
+	if !ok {
+		s.Limiter.Fail("ip:" + ip)
+		return nil, "", &domain.ValidationError{Field: "person_id", Message: "учётная запись Госуслуг не найдена"}
+	}
+	now := s.Now()
+	id := p.Identity
+	id.VerifiedAt = now
+	u, err := s.Users.FindByPhone(ctx, p.Phone)
+	switch {
+	case errors.Is(err, domain.ErrNotFound):
+		c, err := s.Registry.Lookup(ctx, p.CompanyINN)
+		if err != nil {
+			return nil, "", err
+		}
+		u = &domain.User{
+			ID: newID(), Role: domain.RoleClient, Phone: p.Phone, FullName: id.FullName, Position: positionFor(c),
+			Company: *c, Requisites: RequisitesFor(c), Balance: 250_000, CreatedAt: now,
+		}
+		if err := s.Users.CreateUser(ctx, u); err != nil {
+			return nil, "", err
+		}
+		s.audit(ctx, "auth.register", u.ID, "ok", map[string]any{"inn": c.INN, "via": "esia"})
+	case err != nil:
+		return nil, "", err
+	case u.IsEmployee():
+		return nil, "", &domain.ValidationError{Field: "person_id", Message: "сотрудник банка входит в кабинет банка по телефону и паролю"}
+	}
+	u, err = s.Users.UpdateUser(ctx, u.ID, func(x *domain.User) error { x.Identity, x.LastLoginAt = &id, now; return nil })
+	if err != nil {
+		return nil, "", err
+	}
+	s.audit(ctx, "auth.esia", u.ID, "ok", map[string]any{"ip": ip})
 	tok, err := s.Sessions.Create(ctx, u.ID)
 	if err != nil {
 		return nil, "", err

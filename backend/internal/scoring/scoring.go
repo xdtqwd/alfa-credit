@@ -48,8 +48,26 @@ func yearsSince(date string, now time.Time) float64 {
 
 func pct(v float64) string { return fmt.Sprintf("%.0f%%", v*100) }
 
-// Evaluate считает балл и формирует кредитное решение.
-func Evaluate(a *domain.Application, p domain.Product, br *domain.BureauReport, now time.Time) Result {
+// factors — балл и его слагаемые; br == nil — без кредитной истории (предварительный расчёт).
+type assessment struct {
+	score          int
+	factors        []Factor
+	dti            float64
+	monthlyRevenue float64
+	requested      domain.Quote
+}
+
+func (x assessment) explain(sign int) []string {
+	var out []string
+	for _, f := range x.factors {
+		if f.Impact*sign > 0 || (sign > 0 && f.Impact == 0) {
+			out = append(out, f.Explain)
+		}
+	}
+	return out
+}
+
+func assess(a *domain.Application, p domain.Product, br *domain.BureauReport, now time.Time) assessment {
 	score := baseScore
 	var factors []Factor
 	add := func(name string, v int, explain string) {
@@ -111,39 +129,53 @@ func Evaluate(a *domain.Application, p domain.Product, br *domain.BureauReport, 
 		add("Сумма больше годовой выручки", -60, fmt.Sprintf("Запрошенная сумма %s больше выручки компании за год (%s).", domain.Money(a.Amount), domain.Money(a.Financials.AnnualRevenue)))
 	}
 
-	res := Result{Score: score, Factors: factors}
-	explain := func(sign int) []string {
-		var out []string
-		for _, f := range factors {
-			if f.Impact*sign > 0 || (sign > 0 && f.Impact == 0) {
-				out = append(out, f.Explain)
-			}
-		}
-		return out
-	}
+	return assessment{score: score, factors: factors, dti: dti, monthlyRevenue: monthlyRevenue, requested: requested}
+}
 
+// Evaluate — полный скоринг: балл с кредитной историей и кредитное решение по порогам балла.
+func Evaluate(a *domain.Application, p domain.Product, br *domain.BureauReport, now time.Time) Result {
+	x := assess(a, p, br, now)
+	res := Result{Score: x.score, Factors: x.factors}
 	switch {
-	case score < rejectThreshold:
-		reasons := explain(-1)
+	case x.score < rejectThreshold:
+		reasons := x.explain(-1)
 		if len(reasons) == 0 {
 			reasons = []string{"Совокупная оценка риска ниже порога банка."}
 		}
-		d := domain.Decision{Type: domain.DecisionRejected, Reasons: reasons, Requested: &requested}
-		d.Advice = rejectAdvice(a, factors)
+		d := domain.Decision{Type: domain.DecisionRejected, Reasons: reasons, Requested: &x.requested}
+		d.Advice = rejectAdvice(a, x.factors)
 		res.Decision = d
-	case score >= approveThreshold && dti <= maxDTI:
+	case x.score >= approveThreshold && x.dti <= maxDTI:
 		rate := p.Rate
-		reasons := append([]string{"Всё в порядке — одобряем на тех условиях, которые вы запросили."}, explain(+1)...)
-		if score >= 750 {
+		reasons := append([]string{"Всё в порядке — одобряем на тех условиях, которые вы запросили."}, x.explain(+1)...)
+		if x.score >= 750 {
 			rate -= 1.0
 			reasons = append(reasons, fmt.Sprintf("За высокую оценку снизили ставку на 1 п.п.: %s вместо %s.", domain.Rate(rate), domain.Rate(p.Rate)))
 		}
-		d := domain.Decision{Type: domain.DecisionApproved, Reasons: reasons, Requested: &requested}
+		d := domain.Decision{Type: domain.DecisionApproved, Reasons: reasons, Requested: &x.requested}
 		d.SetOffer(domain.NewQuote(a.Amount, rate, a.TermMonths))
 		res.Decision = d
 	default:
-		res.Decision = counterOffer(a, p, monthlyRevenue, requested, explain(-1))
+		res.Decision = counterOffer(a, p, x.monthlyRevenue, x.requested, x.explain(-1))
 	}
+	return res
+}
+
+// Prescore — упрощённый скоринг 1-го уровня: те же факторы, но без кредитной истории, поэтому
+// пороги балла к нему не применяются — без истории балл заведомо занижен. Решение — по посильности
+// платежа: до 50% выручки — одобряем запрошенное, больше — подбираем сумму и срок, не выходит — отказ.
+// Балл и факторы показываем клиенту; окончательное решение по порогам — на полном скоринге.
+func Prescore(a *domain.Application, p domain.Product, now time.Time) Result {
+	x := assess(a, p, nil, now)
+	res := Result{Score: x.score, Factors: x.factors}
+	if x.dti <= maxDTI {
+		reasons := append([]string{"Платёж посильный — предварительно одобряем запрошенные условия."}, x.explain(+1)...)
+		d := domain.Decision{Type: domain.DecisionApproved, Reasons: reasons, Requested: &x.requested}
+		d.SetOffer(x.requested)
+		res.Decision = d
+		return res
+	}
+	res.Decision = counterOffer(a, p, x.monthlyRevenue, x.requested, x.explain(-1))
 	return res
 }
 

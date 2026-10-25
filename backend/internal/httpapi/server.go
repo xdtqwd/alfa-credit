@@ -19,6 +19,7 @@ import (
 	"github.com/xdtqwd/alfa-credit/internal/cache"
 	"github.com/xdtqwd/alfa-credit/internal/domain"
 	"github.com/xdtqwd/alfa-credit/internal/idempotency"
+	"github.com/xdtqwd/alfa-credit/internal/integrations"
 	"github.com/xdtqwd/alfa-credit/internal/obs"
 	"github.com/xdtqwd/alfa-credit/internal/scoring"
 	"github.com/xdtqwd/alfa-credit/internal/service"
@@ -33,8 +34,10 @@ type Server struct {
 	Repo         storage.Repository
 	Log          *slog.Logger
 	BankToken    string
-	Static       fs.FS
-	Version      string
+	// DemoESIA — демо-вход через Госуслуги (мок ЕСИА). Только в APP_MODE=demo: в бою — настоящий OAuth ЕСИА.
+	DemoESIA bool
+	Static   fs.FS
+	Version  string
 
 	Idem           idempotency.Store // nil — Idempotency-Key игнорируется
 	Limiter        *RateLimiter      // nil — без лимита
@@ -68,6 +71,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/security-rules", s.public(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, domain.Security()) }))
 	mux.HandleFunc("POST /api/v1/calc", s.calc)
 	mux.HandleFunc("GET /api/v1/companies/{inn}", s.company)
+	mux.HandleFunc("GET /api/v1/demo/companies", s.public(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, integrations.DemoCompanies()) }))
+	mux.HandleFunc("POST /api/v1/prescore", s.prescore)
+	mux.HandleFunc("GET /api/v1/esia/persons", s.esiaOnly(s.esiaPersons))
+	mux.HandleFunc("POST /api/v1/auth/esia", s.esiaOnly(s.esiaLogin))
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/register", s.register)
@@ -369,6 +376,37 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, u)
 }
 
+// esiaOnly — демо-вход через Госуслуги есть только в демо-режиме.
+func (s *Server) esiaOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.DemoESIA || s.Auth.ESIA == nil {
+			writeErr(w, 404, "not_found", "вход через Госуслуги в этой сборке не подключён", "")
+			return
+		}
+		h(w, r)
+	}
+}
+
+func (s *Server) esiaPersons(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.Auth.ESIAPersons(r.Context()))
+}
+
+func (s *Server) esiaLogin(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		PersonID string `json:"person_id"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	u, tok, err := s.Auth.ESIALogin(r.Context(), in.PersonID, clientIP(r))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.setCookie(w, tok)
+	writeJSON(w, 200, u)
+}
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		s.Auth.Logout(r.Context(), c.Value)
@@ -408,7 +446,11 @@ func (s *Server) products(w http.ResponseWriter, _ *http.Request) {
 // calc — расчёт платежа. Ползунок калькулятора шлёт много одинаковых запросов, поэтому
 // результат кэшируется по (продукт, сумма, срок): ставки — часть кода продукта, расчёт детерминирован.
 func (s *Server) calc(w http.ResponseWriter, r *http.Request) {
-	var in service.CreateInput
+	var in struct {
+		ProductID  string `json:"product_id"`
+		Amount     int64  `json:"amount"`
+		TermMonths int    `json:"term_months"`
+	}
 	if !decode(w, r, &in) {
 		return
 	}
@@ -437,8 +479,22 @@ func (s *Server) company(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, c)
 }
 
+// prescore — предварительный расчёт 1-го уровня: без входа и без заявки.
+func (s *Server) prescore(w http.ResponseWriter, r *http.Request) {
+	var in domain.Level1
+	if !decode(w, r, &in) {
+		return
+	}
+	res, err := s.Svc.Prescore(r.Context(), &in)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, 200, res)
+}
+
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
-	var in service.CreateInput
+	var in domain.Level1
 	if !decode(w, r, &in) {
 		return
 	}

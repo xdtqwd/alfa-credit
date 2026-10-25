@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,7 +27,7 @@ func newEnv(t *testing.T) env {
 	repo, _ := storage.NewFileStore("")
 	users, _ := storage.NewUserFileStore("")
 	reg := integrations.MockRegistry{}
-	a := &AuthService{Users: users, Registry: reg, Now: time.Now, Sessions: auth.NewSessions(time.Hour), Limiter: auth.NewLimiter(5, time.Minute)}
+	a := &AuthService{Users: users, Registry: reg, ESIA: integrations.MockESIA{}, Now: time.Now, Sessions: auth.NewSessions(time.Hour), Limiter: auth.NewLimiter(5, time.Minute)}
 	if err := a.SeedDemo(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -116,29 +117,121 @@ func TestLoginReportsStorageErrors(t *testing.T) {
 	}
 }
 
-func TestCreatePrefillsAndClamps(t *testing.T) {
+// esia — вход через Госуслуги демо-человеком (esia-1 — руководитель «Северного ветра», …).
+func (e env) esia(t *testing.T, personID string) *domain.User {
+	t.Helper()
+	u, tok, err := e.auth.ESIALogin(ctx, personID, "9.9.9.9")
+	if err != nil || tok == "" || u.Identity == nil {
+		t.Fatalf("esia login %s: %v %+v", personID, err, u)
+	}
+	return u
+}
+
+func level1(inn string, amount int64) domain.Level1 {
+	return domain.Level1{ProductID: "business-dev", Amount: amount, TermMonths: 24, INN: inn,
+		Financials: domain.Financials{AnnualRevenue: 80_000_000}}
+}
+
+// Предварительный расчёт 1-го уровня — без БКИ: компания, сверка с ФНС и нагрузка.
+func TestPrescore(t *testing.T) {
 	e := newEnv(t)
-	u := e.user(t, "79000000001")
-	a, err := e.svc.Create(ctx, u.ID, CreateInput{ProductID: "overdraft", Amount: 999_000_000, TermMonths: 1})
+	cases := []struct {
+		name string
+		in   domain.Level1
+		want domain.DecisionType
+	}{
+		{"healthy → approved", level1("7701234567", 3_000_000), domain.DecisionApproved},
+		{"too big → counter", domain.Level1{ProductID: "business-dev", Amount: 20_000_000, TermMonths: 24, INN: "2224000012",
+			Financials: domain.Financials{AnnualRevenue: 18_000_000, MonthlyObligations: 200_000}}, domain.DecisionCounter},
+		{"revenue ≫ ФНС → need info", domain.Level1{ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24, INN: "2224000012",
+			Financials: domain.Financials{AnnualRevenue: 50_000_000}}, domain.DecisionNeedInfo},
+		{"liquidated → rejected", level1("6600000000", 1_000_000), domain.DecisionRejected},
+		{"not in registry → rejected", level1("0000123456", 1_000_000), domain.DecisionRejected},
+		// просрочки в БКИ на 1-м уровне не видны — отказ будет на полном скоринге
+		{"overdue company passes prescore", domain.Level1{ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24, INN: "5401000009",
+			Financials: domain.Financials{AnnualRevenue: 30_000_000, MonthlyObligations: 300_000}}, domain.DecisionApproved},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := c.in
+			res, err := e.svc.Prescore(ctx, &in)
+			if err != nil || res.Decision.Type != c.want || res.Decision.Final || len(res.Decision.Reasons) == 0 {
+				t.Fatalf("prescore: %v %+v", err, res)
+			}
+			for _, f := range res.Factors {
+				if strings.Contains(f.Name, "БКИ") || strings.Contains(f.Name, "Просрочки") {
+					t.Fatalf("prescore must not use the credit bureau: %+v", res.Factors)
+				}
+			}
+		})
+	}
+	bad := level1("12x", 1_000_000)
+	var ve *domain.ValidationError
+	if _, err := e.svc.Prescore(ctx, &bad); !errors.As(err, &ve) || ve.Field != "inn" {
+		t.Fatalf("invalid INN: %v", err)
+	}
+}
+
+func TestESIALogin(t *testing.T) {
+	e := newEnv(t)
+	u := e.esia(t, "esia-1")
+	if u.Phone != "79000000001" || u.Identity.Passport.Number != "345678" || u.Identity.VerifiedAt.IsZero() {
+		t.Fatalf("existing demo account must get the Gosuslugi identity: %+v", u)
+	}
+	if again := e.user(t, "79000000001"); again.Identity == nil {
+		t.Fatal("identity must be saved in the profile")
+	}
+	ip := e.esia(t, "esia-5") // у Иванова аккаунта не было — создаётся по данным реестра
+	if ip.Company.INN != "222400000012" || ip.Company.Type != "ИП" || ip.Position != "Индивидуальный предприниматель" || ip.Requisites.Account == "" {
+		t.Fatalf("new account from Gosuslugi: %+v", ip)
+	}
+	var ve *domain.ValidationError
+	if _, _, err := e.auth.ESIALogin(ctx, "esia-404", "9.9.9.9"); !errors.As(err, &ve) {
+		t.Fatalf("unknown person: %v", err)
+	}
+	if persons := e.auth.ESIAPersons(ctx); len(persons) != 5 || persons[0].CompanyName != "ООО «Северный ветер»" || strings.Contains(persons[0].SNILS, "233") {
+		t.Fatalf("persons view must name the company and mask SNILS: %+v", persons)
+	}
+}
+
+// Заявка создаётся только после входа через Госуслуги и только от компании, которой человек руководит.
+func TestCreateAfterGosuslugi(t *testing.T) {
+	e := newEnv(t)
+	var ve *domain.ValidationError
+	phoneOnly := e.user(t, "79000000001")
+	if _, err := e.svc.Create(ctx, phoneOnly.ID, level1("7701234567", 3_000_000)); !errors.As(err, &ve) || ve.Field != "identity" {
+		t.Fatalf("without Gosuslugi: %v", err)
+	}
+	u := e.esia(t, "esia-1")
+	if _, err := e.svc.Create(ctx, u.ID, level1("2224000012", 3_000_000)); !errors.As(err, &ve) || ve.Field != "inn" {
+		t.Fatalf("someone else's company: %v", err)
+	}
+	if _, err := e.svc.Create(ctx, u.ID, level1("7701234567", 999_000_000)); !errors.As(err, &ve) || ve.Field != "amount" {
+		t.Fatalf("amount out of range: %v", err)
+	}
+	a, err := e.svc.Create(ctx, u.ID, level1("7701234567", 3_000_000))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, _ := domain.FindProduct("overdraft")
-	if a.Amount != p.MaxAmount || a.TermMonths != p.MinTerm {
-		t.Fatalf("must clamp to product limits: %d / %d", a.Amount, a.TermMonths)
+	if a.Status != domain.StatusFullForm || a.Level != 2 || a.Preliminary == nil || a.Preliminary.Final || a.Identity == nil {
+		t.Fatalf("application must start at level 2 with the preliminary decision: %+v", a)
 	}
-	if a.Company == nil || a.Company.INN != u.Company.INN || a.Contact.FullName != u.FullName {
-		t.Fatal("company and contact must be prefilled from profile")
+	if a.Company == nil || a.Contact.FullName != u.FullName || a.Full == nil || a.Full.DirectorPassport == nil || len(a.Checks) == 0 {
+		t.Fatalf("company, contact, checks and director passport must be prefilled: %+v %+v", a, a.Full)
 	}
-	if _, err := e.svc.Create(ctx, u.ID, CreateInput{ProductID: "nope"}); err == nil {
-		t.Fatal("unknown product must fail")
+	orlov := e.esia(t, "esia-4") // компания ликвидирована — предварительный расчёт отказал
+	if _, err := e.svc.Create(ctx, orlov.ID, level1("6600000000", 1_000_000)); !errors.As(err, &ve) || ve.Field != "prescore" {
+		t.Fatalf("rejected prescore: %v", err)
 	}
 }
 
 func TestForeignApplicationIsInvisible(t *testing.T) {
 	e := newEnv(t)
-	owner, other := e.user(t, "79000000001"), e.user(t, "79000000002")
-	a, _ := e.svc.Create(ctx, owner.ID, CreateInput{ProductID: "business-dev"})
+	owner, other := e.esia(t, "esia-1"), e.user(t, "79000000002")
+	a, err := e.svc.Create(ctx, owner.ID, level1("7701234567", 3_000_000))
+	if err != nil {
+		t.Fatal(err)
+	}
 	checks := map[string]func() error{
 		"get":    func() error { _, err := e.svc.Get(ctx, other.ID, a.ID); return err },
 		"patch":  func() error { _, err := e.svc.Patch(ctx, other.ID, a.ID, domain.DraftPatch{}); return err },
@@ -156,18 +249,30 @@ func TestForeignApplicationIsInvisible(t *testing.T) {
 	}
 }
 
-// approve подводит заявку в статус approved с окончательным решением (конвейер тестируется отдельно).
-func approve(t *testing.T, e env, clientID string, amount int64, rate float64) *domain.Application {
+// decide подводит заявку 2-го уровня к окончательному решению (конвейер тестируется отдельно).
+func decide(t *testing.T, e env, phone string, amount int64, to domain.Status, d domain.Decision) *domain.Application {
 	t.Helper()
-	a, _ := e.svc.Create(ctx, clientID, CreateInput{ProductID: "business-dev", Amount: amount, TermMonths: 12})
-	a, err := e.repo.Update(ctx, a.ID, func(x *domain.Application) error {
-		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusApproved} {
+	persons := map[string]string{"79000000001": "esia-1", "79000000002": "esia-2", "79000000004": "esia-4"}
+	u := e.esia(t, persons[phone])
+	in := level1(u.Company.INN, amount)
+	if phone == "79000000004" { // ликвидированная компания: заявку подводим к решению напрямую
+		in.INN = "7701234567"
+	}
+	a, err := e.svc.Create(ctx, u.ID, in)
+	if err != nil {
+		a = &domain.Application{ID: "forced-" + phone, ClientID: u.ID, ProductID: "business-dev", Amount: amount, TermMonths: 12,
+			Status: domain.StatusFullForm, Level: 2, Payments: []domain.Payment{}, Checks: []domain.Check{}}
+		if a, err = e.repo.Create(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err = e.repo.Update(ctx, a.ID, func(x *domain.Application) error {
+		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, to} {
 			if err := x.Transition(s, "test", "", time.Now()); err != nil {
 				return err
 			}
 		}
-		d := domain.Decision{Type: domain.DecisionApproved, Final: true}
-		d.SetOffer(domain.NewQuote(amount, rate, 12))
+		d.Final = true
 		x.Decision = &d
 		return nil
 	})
@@ -175,6 +280,18 @@ func approve(t *testing.T, e env, clientID string, amount int64, rate float64) *
 		t.Fatal(err)
 	}
 	return a
+}
+
+// approve подводит заявку к окончательному одобрению на сумму amount под rate на 12 месяцев.
+func approve(t *testing.T, e env, clientID string, amount int64, rate float64) *domain.Application {
+	t.Helper()
+	u, err := e.users.GetUser(ctx, clientID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := domain.Decision{Type: domain.DecisionApproved}
+	d.SetOffer(domain.NewQuote(amount, rate, 12))
+	return decide(t, e, u.Phone, amount, domain.StatusApproved, d)
 }
 
 func TestSignCreditsBalanceAndPayDebits(t *testing.T) {
@@ -254,88 +371,65 @@ func TestPayUntilClosed(t *testing.T) {
 
 func TestAcceptCounterOfferAppliesNewTerms(t *testing.T) {
 	e := newEnv(t)
-	u := e.user(t, "79000000002")
-	a, _ := e.svc.Create(ctx, u.ID, CreateInput{ProductID: "business-dev", Amount: 20_000_000, TermMonths: 24})
-	e.repo.Update(ctx, a.ID, func(x *domain.Application) error {
-		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusCounterOffer} {
-			x.Transition(s, "test", "", time.Now())
-		}
-		d := domain.Decision{Type: domain.DecisionCounter}
-		d.SetOffer(domain.NewQuote(10_000_000, 21.4, 36))
-		x.Decision = &d
-		return nil
-	})
-	// предварительное контрпредложение: условия фиксируются и открывается полная анкета
-	got, err := e.svc.Accept(ctx, u.ID, a.ID)
-	if err != nil || got.Amount != 10_000_000 || got.TermMonths != 36 || got.Status != domain.StatusFullForm || got.Level != 2 {
-		t.Fatalf("counter accept: %v %+v", err, got)
-	}
-	if got.Preliminary == nil || got.Preliminary.Rate != 21.4 || got.Full == nil || got.Full.Guarantor == nil {
-		t.Fatalf("preliminary terms must be kept, guarantor suggested for >5 mln: %+v %+v", got.Preliminary, got.Full)
+	d := domain.Decision{Type: domain.DecisionCounter}
+	d.SetOffer(domain.NewQuote(4_000_000, 21.4, 36))
+	a := decide(t, e, "79000000002", 3_000_000, domain.StatusCounterOffer, d)
+	got, err := e.svc.Accept(ctx, a.ClientID, a.ID)
+	if err != nil || got.Amount != 4_000_000 || got.TermMonths != 36 || got.Status != domain.StatusSigning {
+		t.Fatalf("counter accept must apply the bank's terms: %v %+v", err, got)
 	}
 }
 
-func TestTwoLevelForm(t *testing.T) {
+// 2-й уровень: до отправки подписать и принять нечего, отправляется только заполненная анкета.
+func TestLevel2Submit(t *testing.T) {
 	e := newEnv(t)
-	u := e.user(t, "79000000001")
-	a, _ := e.svc.Create(ctx, u.ID, CreateInput{ProductID: "business-dev", Amount: 2_000_000, TermMonths: 24})
-	e.repo.Update(ctx, a.ID, func(x *domain.Application) error {
-		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusApproved} {
-			x.Transition(s, "test", "", time.Now())
-		}
-		d := domain.Decision{Type: domain.DecisionApproved} // предварительное
-		d.SetOffer(domain.NewQuote(2_000_000, 19.9, 24))
-		x.Decision = &d
-		return nil
-	})
+	u := e.esia(t, "esia-1")
+	a, err := e.svc.Create(ctx, u.ID, level1("7701234567", 3_000_000))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := e.svc.Sign(ctx, u.ID, a.ID, true); !errors.Is(err, domain.ErrInvalidTransition) {
 		t.Fatal("cannot sign on a preliminary decision")
 	}
-	got, err := e.svc.Accept(ctx, u.ID, a.ID)
-	if err != nil || got.Status != domain.StatusFullForm {
-		t.Fatalf("accept preliminary: %v %+v", err, got)
+	if _, err := e.svc.Accept(ctx, u.ID, a.ID); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Fatal("preliminary decision cannot be accepted — only the final one")
 	}
-	// быстрая анкета закрыта, правится только полная
-	amount := int64(9_000_000)
 	var ve *domain.ValidationError
-	if _, err := e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{Amount: &amount}); !errors.As(err, &ve) {
-		t.Fatalf("level-1 fields must be locked on level 2: %v", err)
+	if _, err := e.svc.Submit(ctx, u.ID, a.ID); !errors.As(err, &ve) || ve.Field != "full_form.consent" {
+		t.Fatalf("level 2 without consent must not be submitted: %v", err)
 	}
-	if _, err := e.svc.Submit(ctx, u.ID, a.ID); !errors.As(err, &ve) || ve.Field != "full_form.employees" {
-		t.Fatalf("empty full form must not be submitted: %v", err)
-	}
-	full := domain.FullForm{Employees: 12, Premises: "rent", PurposeDetails: "Ремонт второго зала и закупка мебели",
-		Collateral: domain.Collateral{Type: domain.CollateralNone}, StatementsConsent: true}
+	full := *a.Full
+	full.Consent = true
 	if _, err := e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{FullForm: &full}); err != nil {
 		t.Fatal(err)
 	}
-	got, err = e.svc.Submit(ctx, u.ID, a.ID)
-	if err != nil || got.Status != domain.StatusVerification || got.Preliminary == nil {
-		t.Fatalf("full form submit: %v %+v", err, got)
+	got, err := e.svc.Submit(ctx, u.ID, a.ID)
+	if err != nil || got.Status != domain.StatusSubmitted || got.Preliminary == nil || len(got.Checks) != 0 {
+		t.Fatalf("level 2 submit: %v %+v", err, got)
+	}
+	if _, err := e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{FullForm: &full}); !errors.Is(err, domain.ErrInvalidTransition) {
+		t.Fatal("cannot edit after submit")
 	}
 }
 
 func TestSubmitResetsPreviousDecision(t *testing.T) {
 	e := newEnv(t)
-	u := e.user(t, "79000000001")
-	a, _ := e.svc.Create(ctx, u.ID, CreateInput{ProductID: "business-dev"})
-	rev := domain.Financials{AnnualRevenue: 80_000_000}
-	consent := true
-	e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{Financials: &rev, Consent: &consent})
+	u := e.esia(t, "esia-1")
+	a, _ := e.svc.Create(ctx, u.ID, level1("7701234567", 3_000_000))
+	full := *a.Full
+	full.Consent = true
+	e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{FullForm: &full})
 	e.repo.Update(ctx, a.ID, func(x *domain.Application) error {
 		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusNeedInfo} {
 			x.Transition(s, "test", "", time.Now())
 		}
-		x.Decision = &domain.Decision{Type: domain.DecisionNeedInfo, Reasons: []string{"x"}}
-		x.Checks = []domain.Check{{Code: "revenue"}}
+		x.Decision = &domain.Decision{Type: domain.DecisionNeedInfo, Reasons: []string{"x"}, Final: true}
+		x.Checks = []domain.Check{{Code: "passport"}}
 		return nil
 	})
 	got, err := e.svc.Submit(ctx, u.ID, a.ID)
 	if err != nil || got.Decision != nil || len(got.Checks) != 0 || got.Status != domain.StatusSubmitted {
 		t.Fatalf("resubmit must clear old decision: %v %+v", err, got)
-	}
-	if _, err := e.svc.Patch(ctx, u.ID, a.ID, domain.DraftPatch{Financials: &rev}); !errors.Is(err, domain.ErrInvalidTransition) {
-		t.Fatal("cannot edit after submit")
 	}
 }
 

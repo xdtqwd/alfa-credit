@@ -1,117 +1,22 @@
 // Заявка после отправки: что нужно от клиента, этапы, решение банка, проверки и история.
 import { api } from '../core/api.js';
-import { on, every, storage } from '../core/dom.js';
-import { esc, rub, months, rate, time } from '../core/format.js';
+import { on, every } from '../core/dom.js';
+import { esc, rub, months, time, dateTime } from '../core/format.js';
 import { navigate } from '../core/router.js';
 import { product, putApp } from '../core/session.js';
-import { STATUS, IN_PIPELINE, DOING, todoFor, statusBadge, stagesFor, isPreliminary } from '../domain.js';
+import { STATUS, IN_PIPELINE, DOING, todoFor, statusBadge, stagesFor } from '../domain.js';
 import { toast } from '../ui/feedback.js';
-import { accordion } from '../ui/accordion.js';
 import { icon } from '../ui/icons.js';
-import { signDialog, payDialog } from '../features/loan.js';
-import { backLink, pageHead, stepper } from './parts.js';
-
-// ---------- блоки решения ----------
-
-const offer = (d) => `
-  <dl class="offer">
-    <div><dt>Сумма</dt><dd>${rub(d.amount)}</dd></div>
-    <div><dt>Срок</dt><dd>${months(d.term_months)}</dd></div>
-    <div><dt>Ставка</dt><dd>${rate(d.rate)}</dd></div>
-    <div><dt>Платёж в месяц</dt><dd>${rub(d.monthly_payment)}</dd></div>
-    <div><dt>Переплата</dt><dd>${rub(d.overpayment)}</dd></div>
-  </dl>`;
+import { offer, compare, reasons, scoreBlock } from '../features/decision.js';
+import { signDialog, payDialog, startApplication } from '../features/loan.js';
+import { backLink, pageHead, stepper, maskPassport } from './parts.js';
 
 // Главная кнопка («Принять», «Подписать», «Оплатить», «Исправить») — одна, в блоке «Что нужно от вас» сверху;
 // в карточке решения остаются только объяснение и «Отказаться».
 
-/** «Вы просили / Банк предлагает / Разница» — все цифры с сервера. heads — подписи колонок. */
-function compare(req, off, heads = ['Вы просили', 'Банк предлагает']) {
-  const rows = [
-    ['Сумма', 'amount', rub, 'more'],
-    ['Срок', 'term_months', months, ''],
-    ['Ставка', 'rate', rate, 'less'],
-    ['Платёж в месяц', 'monthly_payment', rub, 'less'],
-    ['Переплата', 'overpayment', rub, 'less'],
-    ['Всего вернуть', 'total', rub, 'less'],
-  ];
-  const delta = (key, better) => {
-    const dv = off[key] - req[key];
-    if (!dv) return '<span class="delta--same">без изменений</span>';
-    const sign = dv > 0 ? '+' : '−';
-    const abs = Math.abs(dv);
-    const text =
-      key === 'rate'
-        ? `${sign}${String(abs.toFixed(1)).replace('.', ',')} п.п.`
-        : key === 'term_months'
-          ? `${sign}${abs} мес.`
-          : `${sign}${rub(abs)}`;
-    const good = better === 'less' ? dv < 0 : better === 'more' ? dv > 0 : null;
-    return `<span class="${good === null ? '' : good ? 'delta--good' : 'delta--bad'}">${text}</span>`;
-  };
-  return `<div class="table-wrap"><table class="table compare">
-    <thead><tr><th><span class="sr-only">Параметр</span></th><th>${heads[0]}</th><th>${heads[1]}</th><th>Разница</th></tr></thead>
-    <tbody>${rows
-      .map(
-        ([label, key, f, better]) => `
-      <tr class="${off[key] !== req[key] ? 'is-changed' : ''}"><td>${label}</td><td>${f(req[key])}</td><td>${f(off[key])}</td><td>${delta(key, better)}</td></tr>`,
-      )
-      .join('')}
-    </tbody></table></div>`;
-}
-
-const reasons = (title, list) =>
-  list?.length ? `<h3>${title}</h3><ul class="reasons">${list.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : '';
-
-// шкала балльной модели — пороги с сервера
-let SCALE = { base: 600, reject_below: 500, approve_from: 650, max_dti_percent: 50 };
-api('GET', '/scoring/scale')
-  .then((s) => {
-    SCALE = s;
-  })
-  .catch(() => {});
-
-/** «Как банк оценил заявку»: шкала с зонами и факторы с плюсами и минусами. */
-function scoreBlock(a) {
-  if (a.score == null || !a.factors?.length) return '';
-  const [MIN, MAX] = [350, 850];
-  const at = (v) => Math.max(0, Math.min(100, ((v - MIN) / (MAX - MIN)) * 100));
-  const r = at(SCALE.reject_below);
-  const g = at(SCALE.approve_from);
-  const zone =
-    a.score >= SCALE.approve_from
-      ? ['зона одобрения', 'ok']
-      : a.score >= SCALE.reject_below
-        ? ['зона других условий', 'warn']
-        : ['зона отказа', 'bad'];
-  const factors = [...a.factors].sort((x, y) => y.impact - x.impact);
-  const body = `
-    <div class="scale" role="img" aria-label="Балл ${a.score}: отказ ниже ${SCALE.reject_below}, одобрение от ${SCALE.approve_from}">
-      <span class="scale__mark" style="left:${at(a.score)}%"><b>${a.score}</b></span>
-      <div class="scale__track"><i class="z-bad" style="width:${r}%"></i><i class="z-warn" style="width:${g - r}%"></i><i class="z-ok" style="width:${100 - g}%"></i></div>
-      <div class="scale__legend">
-        <span style="width:${r}%">Отказ<small>ниже ${SCALE.reject_below}</small></span>
-        <span style="width:${g - r}%">Другие условия<small>${SCALE.reject_below}–${SCALE.approve_from - 1}</small></span>
-        <span style="width:${100 - g}%">Одобрение<small>от ${SCALE.approve_from}*</small></span>
-      </div>
-    </div>
-    <p class="calc__note">* Для одобрения нужен ещё и посильный платёж: вместе с текущими — не больше ${SCALE.max_dti_percent}% месячной выручки.</p>
-    <ul class="factors">
-      <li><span class="factor__pts">${SCALE.base}</span><div><b>Стартовый балл</b><small>С него начинается оценка любой заявки.</small></div></li>
-      ${factors.map((f) => `<li class="${f.impact >= 0 ? 'factor--plus' : 'factor--minus'}"><span class="factor__pts">${f.impact > 0 ? '+' : '−'}${Math.abs(f.impact)}</span><div><b>${esc(f.name)}</b><small>${esc(f.explain)}</small></div></li>`).join('')}
-      <li class="factor--total"><span class="factor__pts">${a.score}</span><div><b>Итоговый балл</b><small>${zone[0]}</small></div></li>
-    </ul>`;
-  return accordion({
-    key: `score-${a.id}`,
-    open: true,
-    cls: 'score',
-    header: `Как банк оценил заявку <span class="status status--${zone[1]}">${a.score} баллов · ${zone[0]}</span>`,
-    body,
-  });
-}
-
 function decisionCard(a) {
   const d = a.decision;
+  const pre = a.preliminary;
   const card = (tone, title, body) =>
     `<section class="card decision decision--${tone}" id="decision" data-decision="${a.status}"><h2>${title}</h2>${body}</section>`;
   const cancel = '<button class="btn btn--ghost" data-action="cancel">Отказаться</button>';
@@ -119,47 +24,29 @@ function decisionCard(a) {
     case 'submitted':
     case 'data_check':
     case 'scoring':
-      return card(
-        'info',
-        'Рассматриваем заявку',
-        `<p class="muted">Вы запросили ${rub(a.amount)} на ${months(a.term_months)}${a.quote ? ` — ориентировочный платёж ${rub(a.quote.monthly_payment)} в месяц` : ''}. Статус обновится сам.</p>`,
-      );
     case 'verification':
       return card(
         'info',
-        'Проверяем полную анкету',
-        `<p class="muted">Предварительно одобрено ${rub(a.amount)} на ${months(a.term_months)}. Сейчас банк проверяет обеспечение${a.full_form?.guarantor ? ' и поручителя' : ''} — окончательное решение придёт сюда же.</p>`,
+        'Считаем полный скоринг',
+        `<p class="muted">Предварительно ${pre?.type === 'counter_offer' ? 'одобрено на других условиях' : 'одобрено'}: ${rub(a.amount)} на ${months(a.term_months)}${pre ? `, ставка от ${String(pre.rate).replace('.', ',')}%` : ''}. Сейчас банк запрашивает кредитную историю и проверяет документы${a.full_form?.guarantor ? ' и поручителя' : ''} — окончательное решение придёт сюда же.</p>`,
       );
-    case 'approved': {
-      if (isPreliminary(a))
-        return card(
-          'ok',
-          'Предварительно одобрено',
-          `${offer(d)}${nextStep()}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
-          <div class="actions">${cancel}</div>`,
-        );
-      // окончательное решение двухуровневой заявки сравниваем с предварительным, одноуровневой — с запросом
-      const heads = a.preliminary ? ['Предварительно', 'Окончательно'] : undefined;
+    case 'approved':
+      // окончательное решение сравниваем с предварительным расчётом 1-го уровня
       return card(
         'ok',
-        a.preliminary ? 'Кредит одобрен окончательно' : 'Кредит одобрен',
-        `${d.requested && d.requested.rate !== d.rate ? compare(d.requested, d, heads) : offer(d)}${reasons('Почему так', d.reasons)}${a.preliminary ? '' : scoreBlock(a)}
+        'Кредит одобрен',
+        `${d.requested && d.requested.rate !== d.rate ? compare(d.requested, d, ['Предварительно', 'Окончательно']) : offer(d)}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
         <div class="actions">${cancel}</div>`,
       );
-    }
     case 'counter_offer':
       return card(
         'warn',
-        isPreliminary(a) ? 'Предварительно: можем выдать на других условиях' : 'Можем выдать на других условиях',
-        `<p class="muted">Сравните, что вы просили и что предлагает банк:</p>${d.requested ? compare(d.requested, d) : offer(d)}${isPreliminary(a) ? nextStep() : ''}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
+        'Можем выдать на других условиях',
+        `<p class="muted">Сравните, что вы просили и что предлагает банк:</p>${d.requested ? compare(d.requested, d) : offer(d)}${reasons('Почему так', d.reasons)}${scoreBlock(a)}
         <div class="actions">${cancel}</div>`,
       );
     case 'need_info':
-      return card(
-        'warn',
-        a.level === 2 ? 'Нужно уточнить полную анкету' : 'Нужно уточнить данные',
-        `${reasons('Почему так', d.reasons)}${reasons('Что сделать', d.advice)}`,
-      );
+      return card('warn', 'Нужно уточнить данные', `${reasons('Почему так', d?.reasons)}${reasons('Что сделать', d?.advice)}`);
     case 'rejected':
       return card(
         'bad',
@@ -191,18 +78,19 @@ function decisionCard(a) {
       return card(
         'info',
         'Заявка отменена',
-        '<p class="muted">Новую заявку можно оформить за пару минут — данные компании подтянутся снова.</p><div class="actions"><a class="btn btn--primary" href="#/">Оформить кредит</a></div>',
+        '<p class="muted">Новый предварительный расчёт — пара минут, без входа.</p><div class="actions"><a class="btn btn--primary" href="#/apply">Рассчитать кредит</a></div>',
+      );
+    case 'draft':
+      return card(
+        'info',
+        'Анкета из прошлой версии',
+        '<p class="muted">Теперь кредит оформляется в два уровня: предварительный расчёт без входа, затем вход через Госуслуги и документы. Начните новый расчёт — данные компании подтянутся сами.</p>',
       );
     default:
       return '';
   }
 }
 
-/** Что будет после предварительного одобрения. */
-const nextStep = () =>
-  `<div class="note note--box">${icon('info', 20)}<span><b>Решение предварительное.</b> Дальше — полная анкета: о бизнесе, обеспечении и согласие на выписки (3–5 минут). После неё — окончательное решение и подписание.</span></div>`;
-
-const PREMISES = { own: 'Собственное', rent: 'Аренда', none: 'Без помещения' };
 const COLLATERAL = {
   realty: 'Недвижимость',
   vehicle: 'Транспорт и спецтехника',
@@ -210,17 +98,19 @@ const COLLATERAL = {
   deposit: 'Депозит в Альфа-Банке',
 };
 
-/** Что клиент указал в полной анкете — после её отправки. */
+/** Что клиент приложил на 2-м уровне — после отправки. */
 function fullSummary(a) {
   const f = a.full_form;
-  if (!f || ['full_form'].includes(a.status)) return '';
+  if (!f || a.status === 'full_form') return '';
   const c = f.collateral || {};
-  return `<section class="card"><h2 class="card__title">Полная анкета</h2><dl class="kv full-summary">
-    <div><dt>Сотрудников</dt><dd>${f.employees}</dd></div>
-    <div><dt>Помещение</dt><dd>${esc(PREMISES[f.premises] || '—')}</dd></div>
+  const id = a.identity;
+  return `<section class="card"><h2 class="card__title">Документы 2-го уровня</h2><dl class="kv full-summary">
+    ${id ? `<div><dt>Госуслуги</dt><dd>${esc(id.full_name)}, паспорт ${maskPassport(id.passport)}</dd></div>` : ''}
+    ${f.director_passport ? `<div><dt>Паспорт руководителя</dt><dd>${maskPassport(f.director_passport)}</dd></div>` : ''}
+    ${f.protocol ? `<div><dt>Протокол о крупной сделке</dt><dd>${esc(f.protocol.name)}</dd></div>` : ''}
     <div><dt>Залог</dt><dd>${c.type && c.type !== 'none' ? `${esc(COLLATERAL[c.type])}, ${rub(c.value)}` : 'Без залога'}</dd></div>
     <div><dt>Поручитель</dt><dd>${f.guarantor ? esc(f.guarantor.full_name) : 'Нет'}</dd></div>
-  </dl><p class="note">${icon('doc', 20)}<span>${esc(f.purpose_details)}</span></p></section>`;
+  </dl>${id?.verified_at ? `<p class="note">${icon('lock', 20)}<span>Личность подтверждена через Госуслуги ${dateTime(id.verified_at)}</span></p>` : ''}</section>`;
 }
 
 function todoNotice(a) {
@@ -236,7 +126,7 @@ function todoNotice(a) {
 function layout(a) {
   const p = product(a.product_id);
   const busy = IN_PIPELINE.includes(a.status);
-  const { stages, idx } = stagesFor(a, p && !p.express);
+  const { stages, idx } = stagesFor(a);
   const sent = a.history.find((h) => h.status === 'submitted');
   const decided = a.history.find((h) => ['approved', 'counter_offer', 'rejected', 'need_info'].includes(h.status));
   const secs = sent && decided ? Math.round((new Date(decided.at) - new Date(sent.at)) / 1000) : null;
@@ -247,7 +137,7 @@ function layout(a) {
     </div>
     ${todoNotice(a)}
     <section class="card stepper-box">
-      <div class="card__head"><h2>Прогресс заявки</h2>${secs !== null ? `<span class="small muted">${p && !p.express ? 'Предварительное решение' : 'Решение'} — за ${secs} с</span>` : ''}</div>
+      <div class="card__head"><h2>Прогресс заявки</h2>${secs !== null ? `<span class="small muted">Полный скоринг — за ${secs} с</span>` : ''}</div>
       ${stepper(a, stages, { [a.status]: idx }, busy)}
       ${busy ? `<p class="note">${icon('clock', 20)}<span>${DOING[a.status]}</span></p>` : ''}
     </section>
@@ -316,8 +206,6 @@ export default function applicationStatus(root, initial, { signal }) {
         if (action === 'accept') {
           const next = await api('POST', `/applications/${a.id}/accept`);
           putApp(next);
-          // предварительное решение → полная анкета; окончательное → подписание
-          if (next.status === 'full_form') return navigate(`/cabinet/applications/${a.id}`);
           draw(next);
           const signed = await signDialog(a);
           if (signed && !signal.aborted) draw(signed);
@@ -335,10 +223,8 @@ export default function applicationStatus(root, initial, { signal }) {
           toast('Заявка отменена');
         }
         if (action === 'fix') navigate(`/cabinet/applications/${a.id}`);
-        if (action === 'retry') {
-          storage.set('calc', { product: a.product_id, amount: Math.round(a.amount / 2 / 10000) * 10000, term: a.term_months });
-          navigate('/', { scroll: 'calc' });
-        }
+        if (action === 'retry') startApplication(a.product_id, Math.round(a.amount / 2 / 10000) * 10000, a.term_months, a.inn);
+        if (action === 'restart') startApplication(a.product_id, a.amount, a.term_months, a.inn);
       } catch (e) {
         toast(e.message, { error: true });
       }

@@ -26,7 +26,7 @@ function kpis(rows) {
   const items = [
     ['Всего заявок', rows.length],
     ['В конвейере', count(IN_PIPELINE)],
-    ['Одобрено / выдано', count(['approved', 'counter_offer', 'full_form', 'signing', 'issued'])],
+    ['Одобрено / выдано', count(['approved', 'counter_offer', 'signing', 'issued', 'closed'])],
     ['Отказ', count(['rejected'])],
     ['Средний балл', avgScore],
     ['Время до решения', avgTime],

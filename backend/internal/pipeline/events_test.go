@@ -31,7 +31,8 @@ func TestEventDrivenPipelineReachesDecision(t *testing.T) {
 	now := time.Now()
 	a, _ := repo.Create(c, &domain.Application{ID: "ev-1", ClientID: "c", ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24,
 		INN: co.INN, Company: co, Financials: domain.Financials{AnnualRevenue: co.RevenueLastYear}, Consent: true,
-		Status: domain.StatusDraft, CreatedAt: now, StatusChangedAt: now})
+		Level: 2, Identity: testIdentity, Full: func() *domain.FullForm { f := level2Form(co); return &f }(),
+		Status: domain.StatusFullForm, CreatedAt: now, StatusChangedAt: now})
 	if _, err := repo.Update(c, a.ID, func(x *domain.Application) error {
 		return x.Transition(domain.StatusSubmitted, "client", "", time.Now())
 	}); err != nil {
@@ -55,7 +56,7 @@ func TestDuplicateEventIsHarmless(t *testing.T) {
 	w := &Worker{Repo: repo, Registry: integrations.MockRegistry{}, Bureau: integrations.MockBureau{},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: time.Now}
 	a := submitted(t, repo, "7701234567", 3_000_000, 84_000_000, 0)
-	e := events.FromChange(&domain.Application{ID: a.ID, Status: domain.StatusDraft}, a, "")[0]
+	e := events.FromChange(&domain.Application{ID: a.ID, Status: domain.StatusFullForm}, a, "")[0]
 	if err := w.Handle(ctx, e); err != nil {
 		t.Fatal(err)
 	}

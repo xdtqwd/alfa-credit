@@ -38,19 +38,36 @@ async function login(page, phone) {
   await page.click('#auth-form button[type=submit]');
   await page.waitForSelector('#requisites');
 }
-async function fill(page, { revenue, obligations } = {}) {
-  await page.waitForSelector('#f-revenue');
-  if (revenue) await page.fill('#f-revenue', String(revenue));
-  else await page.click('[data-use-fns]');
-  if (obligations) await page.fill('#f-obligations', String(obligations));
-  await page.check('#f-consent');
-  await page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено');
+/** 1-й уровень — предварительный расчёт без входа. */
+async function level1(page, { product = 'business-dev', amount, inn = '7701234567', obligations } = {}) {
+  await page.goto(BASE + '/#/apply');
+  await page.waitForSelector('#ap-inn');
+  await page.click(`[data-product="${product}"]`);
+  if (amount) {
+    await page.fill('#ap-calc [data-calc=amount-text]', String(amount));
+    await page.press('#ap-calc [data-calc=amount-text]', 'Enter');
+  }
+  await page.selectOption('#ap-inn', inn);
+  await page.waitForSelector('[data-use-fns]');
+  await page.click('[data-use-fns]');
+  if (obligations) await page.fill('#ap-obligations', String(obligations));
+  await sleep(500);
 }
-const newApplication = async (page) => {
-  await page.click('[data-header=new-loan]');
-  await page.waitForSelector('#f-revenue');
+const prescore = async (page) => {
+  await page.click('#prescore');
+  await page.waitForSelector('#prescore-result');
+  await sleep(600);
 };
+/** Вход через Госуслуги и 2-й уровень анкеты. */
+async function esia(page) {
+  await page.click('#esia-go');
+  await page.waitForSelector('#esia-ok');
+  await page.click('#esia-ok');
+  await page.waitForSelector('[data-key="consent"]');
+}
 const submit = async (page) => {
+  await page.check('#ff-consent');
+  await page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено');
   await page.click('#submit');
   await page.waitForSelector('.stepper');
 };
@@ -73,29 +90,23 @@ const top = async (page) => {
   await ctx.close();
 }
 
-// одобрение: профиль → анкета → прогресс → решение → кредит
+// одобрение: профиль → предварительный расчёт → Госуслуги → документы → полный скоринг → кредит
 {
   const { ctx, page } = await session();
   await login(page, '79000000001');
   await sleep(400);
   await shot(page, 'profile');
-  await newApplication(page);
-  await fill(page);
+  await level1(page);
   await top(page);
   await shot(page, 'apply');
-  await submit(page);
-  await top(page);
-  await sleep(1200);
-  await shot(page, 'progress');
-  await page.waitForSelector('#decision.decision--ok', { timeout: 30000 });
-  await top(page);
-  await shot(page, 'preliminary');
-  // уровень 2: полная анкета → окончательное решение
-  await page.click('#todo [data-action=accept]');
-  await page.waitForSelector('#ff-employees');
-  await page.fill('#ff-employees', '25');
-  await page.click('[data-premises=rent]');
-  await page.fill('#ff-purpose', 'Открытие второго магазина и закупка торгового оборудования');
+  await prescore(page);
+  await shotOf(page, 'preliminary', '#prescore-result');
+  await page.click('#esia-go');
+  await page.waitForSelector('.esia__person.is-on');
+  await sleep(400);
+  await shotOf(page, 'esia', '.modal');
+  await page.click('#esia-ok');
+  await page.waitForSelector('[data-key="consent"]');
   await page.click('[data-collateral=equipment]');
   await page.fill('#ff-coll-value', '4000000');
   await page.check('#ff-consent');
@@ -103,9 +114,11 @@ const top = async (page) => {
   await top(page);
   await shot(page, 'full-form');
   await page.click('#submit');
-  await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
-    timeout: 30000,
-  });
+  await page.waitForSelector('.stepper');
+  await top(page);
+  await sleep(1200);
+  await shot(page, 'progress');
+  await page.waitForSelector('#decision[data-decision=approved]', { timeout: 30000 });
   await top(page);
   await shot(page, 'approved');
   await page.click('#todo [data-action=accept]');
@@ -126,55 +139,48 @@ const top = async (page) => {
   await ctx.close();
 }
 
-// контрпредложение и отказ
+// контрпредложение — уже в предварительном расчёте, без входа
 {
   const { ctx, page } = await session();
-  await login(page, '79000000002');
-  await page.goto(BASE + '/#/');
-  await page.click('#products [data-start="business-dev"]');
-  await page.waitForSelector('[data-calc=amount-text]');
-  await page.click('[data-calc=amount-text]');
-  await page.keyboard.press('ControlOrMeta+a');
-  await page.keyboard.type('20000000');
-  await page.keyboard.press('Enter');
-  await fill(page, { obligations: 200000 });
-  await submit(page);
-  await page.waitForSelector('#decision.decision--warn', { timeout: 30000 });
-  await shotOf(page, 'counter', '#decision');
+  await level1(page, { inn: '2224000012', amount: 20000000, obligations: 200000 });
+  await prescore(page);
+  await shotOf(page, 'counter', '#prescore-result');
   await ctx.close();
 }
+// отказ — на полном скоринге: просрочки видны только в кредитной истории
 {
   const { ctx, page } = await session();
-  await login(page, '79000000003');
-  await newApplication(page);
-  await fill(page);
+  await level1(page, { inn: '5401000009', obligations: 300000 });
+  await prescore(page);
+  await esia(page);
   await submit(page);
   await page.waitForSelector('#decision.decision--bad', { timeout: 30000 });
   await shotOf(page, 'reject', '#decision');
   await ctx.close();
 }
-// кабинет банка: сотрудник входит своей учётной записью
+// кабинет банка: сотрудник входит своей учётной записью и попадает в профиль
 {
   const { ctx, page } = await session();
   await page.goto(BASE + '/#/');
   await page.click('[data-header=login]');
   await page.click('[data-demo="79000000005"]');
+  await page.waitForSelector('.staff-queue');
+  await sleep(500);
+  await shot(page, 'staff-profile', { fullPage: true });
+  await page.goto(BASE + '/#/bank');
   await page.waitForSelector('#bank-table table');
   await sleep(2500);
   await shot(page, 'bank');
   await shot(page, 'bank-platform', { clip: { x: 0, y: 70, width: 1440, height: 330 } });
-  await page.goto(BASE + '/#/bank/profile');
-  await page.waitForSelector('.staff-queue');
-  await shot(page, 'staff-profile', { fullPage: true });
   await ctx.close();
 }
 
-// разбор балла
+// разбор балла полного скоринга
 {
   const { ctx, page } = await session();
-  await login(page, '79000000002');
-  await newApplication(page);
-  await fill(page);
+  await level1(page, { inn: '2224000012' });
+  await prescore(page);
+  await esia(page);
   await submit(page);
   await page.waitForSelector('#decision.decision--ok', { timeout: 30000 });
   await shotOf(page, 'score', '.acc.score');

@@ -16,8 +16,6 @@ type Product struct {
 	DefaultTerm int      `json:"default_term"`
 	Purposes    []string `json:"purposes"`
 	Badge       string   `json:"badge,omitempty"`
-	// Express — одноуровневый продукт: решение по быстрой анкете сразу окончательное, без полной анкеты.
-	Express bool `json:"express"`
 	// DefaultPayment — платёж при сумме и сроке по умолчанию (считает сервер).
 	DefaultPayment int64 `json:"default_payment"`
 }
@@ -51,7 +49,6 @@ var catalog = []Product{
 		DefaultAmt: 500_000, DefaultTerm: 12,
 		Purposes: []string{"Кассовые разрывы"},
 		Badge:    "Решение за минуту",
-		Express:  true,
 	},
 }
 

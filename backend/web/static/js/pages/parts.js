@@ -49,3 +49,17 @@ export function stepper(a, stages, stageOf, busy) {
     })
     .join('')}</ol>`;
 }
+
+/** Два уровня анкеты: где клиент сейчас и что будет дальше. */
+export function levels(current = 1) {
+  const step = (n, title, text) =>
+    `<li class="levels__item ${n === current ? 'is-current' : n < current ? 'is-done' : ''}"><span class="levels__n">${n < current ? icon('check', 16) : n}</span><div><b>${title}</b><small>${text}</small></div></li>`;
+  return `<ol class="levels" aria-label="Уровни анкеты">
+    ${step(1, 'Предварительный расчёт', 'Без входа: кредит, ИНН и выручка → решение за секунды')}
+    ${step(2, 'Госуслуги и документы', 'Вход через Госуслуги, паспорт, обеспечение → окончательное решение')}
+  </ol>`;
+}
+
+/** Серия и номер паспорта с закрытой серединой: «45 12 ••••78». */
+export const maskPassport = (p) =>
+  p?.series?.length === 4 && p?.number?.length === 6 ? `${p.series.slice(0, 2)} ${p.series.slice(2)} ••••${p.number.slice(4)}` : '—';

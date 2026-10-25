@@ -14,7 +14,7 @@ import {
   maskAccount,
   initials,
 } from '../../backend/web/static/js/core/format.js';
-import { STATUS, IN_PIPELINE, todoFor, appSummary, stagesFor, editLevel, statusLabel } from '../../backend/web/static/js/domain.js';
+import { STATUS, IN_PIPELINE, todoFor, appSummary, stagesFor, editable, statusLabel } from '../../backend/web/static/js/domain.js';
 import { route, redirect, match } from '../../backend/web/static/js/core/router.js';
 
 const nbsp = (s) => s.replace(/ | /g, ' ');
@@ -63,26 +63,23 @@ test('esc экранирует разметку из пользовательс�
 test('у каждого статуса есть подпись и этап прогресса', () => {
   for (const s of Object.keys(STATUS)) {
     assert.ok(STATUS[s][0], `нет подписи статуса ${s}`);
-    for (const two of [true, false]) {
-      const { stages, idx } = stagesFor({ status: s, decision: {} }, two);
-      assert.ok(Number.isInteger(idx) && idx >= 0 && idx < stages.length, `нет этапа для статуса ${s} (двухуровневая: ${two})`);
-    }
+    const { stages, idx } = stagesFor({ status: s, decision: {} });
+    assert.ok(Number.isInteger(idx) && idx >= 0 && idx < stages.length, `нет этапа для статуса ${s}`);
   }
   for (const s of IN_PIPELINE) assert.ok(STATUS[s], `неизвестный статус ${s}`);
 });
 
-test('двухуровневая анкета: какой уровень правится и как подписан статус', () => {
-  assert.equal(editLevel({ status: 'draft' }), 1);
-  assert.equal(editLevel({ status: 'need_info', level: 1 }), 1);
-  assert.equal(editLevel({ status: 'full_form', level: 2 }), 2);
-  assert.equal(editLevel({ status: 'need_info', level: 2 }), 2);
-  assert.equal(editLevel({ status: 'verification', level: 2 }), 0);
-  const pre = { status: 'approved', decision: { final: false } };
-  assert.equal(statusLabel('approved', pre), 'Предварительно одобрено');
-  assert.equal(statusLabel('approved', { status: 'approved', decision: { final: true } }), 'Одобрено');
-  assert.equal(stagesFor(pre, true).stages[stagesFor(pre, true).idx], 'Предварительное решение');
-  const fin = { status: 'approved', decision: { final: true } };
-  assert.equal(stagesFor(fin, true).stages[stagesFor(fin, true).idx], 'Окончательное решение');
+test('двухуровневая анкета: когда правится 2-й уровень и на каком этапе заявка', () => {
+  assert.equal(editable({ status: 'full_form', level: 2 }), true);
+  assert.equal(editable({ status: 'need_info', level: 2 }), true);
+  assert.equal(editable({ status: 'draft' }), false); // черновик прошлой версии — только подсказка начать заново
+  assert.equal(editable({ status: 'submitted', level: 2 }), false);
+  assert.equal(statusLabel('full_form'), 'Документы');
+  const stage = (status) => stagesFor({ status }).stages[stagesFor({ status }).idx];
+  assert.equal(stage('full_form'), 'Госуслуги и документы');
+  assert.equal(stage('scoring'), 'Полный скоринг');
+  assert.equal(stage('approved'), 'Решение');
+  assert.equal(stage('issued'), 'Деньги на счёте');
 });
 
 test('todoFor: главная кнопка заявки — одна и по статусу', () => {
@@ -96,8 +93,8 @@ test('todoFor: главная кнопка заявки — одна и по с�
     ...extra,
   });
   assert.deepEqual(todoFor(app('approved', { decision: { amount: 3000000, final: true } })).action, ['accept', 'Принять и подписать']);
-  assert.deepEqual(todoFor(app('approved')).action, ['accept', 'Принять и продолжить']); // предварительное → полная анкета
   assert.equal(todoFor(app('full_form')).action[0], 'fix');
+  assert.equal(todoFor(app('draft')).action[0], 'restart');
   assert.equal(todoFor(app('counter_offer')).action[0], 'accept');
   assert.equal(todoFor(app('need_info')).action[0], 'fix');
   assert.equal(todoFor(app('need_info')).text, 'Уточните выручку');

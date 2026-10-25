@@ -4,12 +4,13 @@ import { $, on } from './core/dom.js';
 import { esc } from './core/format.js';
 import { route, redirect, match, currentPath, navigate, takeScroll } from './core/router.js';
 import { session, init, subscribe, signOut, startPolling, isStaff } from './core/session.js';
-import { appPath, isPreliminary } from './domain.js';
+import { appPath } from './domain.js';
 import { closeModal, toast } from './ui/feedback.js';
 import { mountHeader, renderHeader } from './ui/header.js';
 import { icon } from './ui/icons.js';
 import { openAuth } from './features/auth.js';
 import landing from './pages/landing.js';
+import apply from './pages/apply.js';
 import profile from './pages/profile.js';
 import applications from './pages/applications.js';
 import application from './pages/application.js';
@@ -20,6 +21,7 @@ import staffProfile from './pages/staff-profile.js';
 
 // ---------- маршруты ----------
 route('/', landing, { area: 'site', platinum: true }); // главная — платиновая тема для предпринимателей
+route('/apply', apply, { area: 'site' }); // 1-й уровень анкеты — без входа
 route('/cabinet', profile, { area: 'cabinet', tab: 'profile', auth: true });
 route('/cabinet/applications', applications, { area: 'cabinet', tab: 'applications', auth: true });
 route('/cabinet/applications/:id', application, { area: 'cabinet', tab: 'applications', auth: true });
@@ -101,17 +103,14 @@ async function render() {
 const STATUS_NEWS = {
   approved: 'Кредит одобрен',
   counter_offer: 'Банк предлагает другие условия',
-  need_info: 'Банку нужно уточнение',
+  need_info: 'Банку нужно уточнение по документам',
   rejected: 'Отказ по заявке',
   issued: 'Деньги на расчётном счёте',
   closed: 'Кредит погашен',
 };
 function announce(changes) {
   for (const a of changes) {
-    // предварительное решение зовёт к полной анкете, а не к подписанию
-    const text = isPreliminary(a)
-      ? `${a.status === 'approved' ? 'Предварительно одобрено' : 'Предварительно: другие условия'} — заполните полную анкету`
-      : STATUS_NEWS[a.status];
+    const text = STATUS_NEWS[a.status];
     if (!text || currentPath() === appPath(a)) continue; // на странице заявки статус и так обновляется
     toast(`${text} · ${a.number}`, { link: { href: appPath(a), label: 'Открыть' }, ms: 6000 });
   }

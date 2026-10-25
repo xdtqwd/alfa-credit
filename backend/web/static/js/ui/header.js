@@ -208,7 +208,7 @@ export function mountHeader(root) {
       if (await openAuth()) navigate('/cabinet');
       return;
     }
-    if (action === 'new-loan') return startApplication('business-dev');
+    if (action === 'new-loan') return startApplication();
     if (action === 'copy-requisites') {
       setMenu(false);
       return copy(requisitesText(), 'Реквизиты скопированы');
