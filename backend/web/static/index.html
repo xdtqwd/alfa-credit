@@ -3,43 +3,46 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Кредитный кабинет — Альфа Бизнес</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23EF3124'/%3E%3Cpath d='M10 22h12M16 8v10m-5-5h10' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="app.css">
+  <title>Кредиты для бизнеса — Альфа Бизнес</title>
+  <meta name="description" content="Кредит для малого бизнеса онлайн: расчёт, анкета и решение за минуты, подписание и деньги на счёте — в одном кабинете.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 24'%3E%3Cpath fill='%23EF3124' fill-rule='evenodd' d='M9.103 2c-1.485 0-1.946.879-2.342 2l-4.08 11.557h2.706l.942-2.747h5.206l.873 2.747h2.877L11.397 4c-.376-1.117-.81-2-2.294-2zm-.071 3.01h-.069l-1.85 5.479h3.665L9.032 5.01zM15.593 22H2.407v-2.73h13.186V22z'/%3E%3C/svg%3E">
+  <link rel="preload" href="fonts/inter-cyrillic-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/StyreneAWeb-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/pages.css">
+  <link rel="stylesheet" href="css/landing.css">
+  <script type="module" src="js/main.js"></script>
 </head>
 <body>
-  <header class="ahdr">
-    <div class="ahdr__in">
-      <a class="ahdr__logo" href="#/products" aria-label="На главную"><span class="ahdr__mark">₽</span><span class="ahdr__name"><b>Альфа Бизнес</b><small>Кредитный кабинет</small></span></a>
-      <nav class="ahdr__nav" id="hdrnav" aria-label="Разделы"></nav>
-      <div class="ahdr__right">
-        <button class="ahdr__ic" data-do="palette" aria-label="Поиск" title="Поиск (Ctrl K)"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M10.544 3a7.544 7.544 0 104.405 13.67L20.28 22 22 20.28l-5.33-5.33A7.544 7.544 0 0010.544 3zm-5.11 7.544a5.11 5.11 0 1110.221 0 5.11 5.11 0 01-10.221 0z" fill-rule="evenodd" clip-rule="evenodd"/></svg></button>
-        <div class="dd" data-dd="bell" id="bell-dd" hidden><button class="dd__btn ahdr__ic" aria-label="Уведомления" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3.404 9.171L15.233 21l.926-.669.188-1.065a7 7 0 011.943-3.73l1.292-1.293a6.2 6.2 0 001.822-4.416c0-3.53-3.312-6.827-6.827-6.827a6.2 6.2 0 00-4.416 1.822L8.868 6.114a7 7 0 01-3.73 1.943l-1.064.188-.67.926zm2.663 9.078a2.498 2.498 0 003.534 0l-3.534-3.533a2.498 2.498 0 000 3.533z"/></svg></button><div class="dd__panel dd__panel--right dd__panel--bell"></div></div>
-        <div class="auth-slot" id="auth-slot"></div>
-        <button class="ahdr__ic ahdr__burger" data-do="menu" aria-label="Меню" aria-haspopup="dialog" aria-expanded="false"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true" focusable="false"><path d="M3 13.25h18v-2.5H3v2.5zm0-7.5v2.5h18v-2.5H3zm0 12.5h18v-2.5H3v2.5z"/></svg></button>
+  <header id="header" class="header"></header>
+  <main id="view" class="page"></main>
+
+  <footer class="footer platinum">
+    <div class="container">
+      <p class="footer__crumbs"><span>Альфа Бизнес</span><span>Кредиты для бизнеса</span></p>
+      <div class="footer__grid">
+        <div class="footer__col">
+          <span class="footer__title">О проекте</span>
+          <p>Проект умного кредитного кабинета для Альфа-Хактона от команды Purity Team. Все компании фиктивны, все совпадения случайны. Внешние сервисы – заглушки</p>
+        </div>
+        <nav class="footer__col" aria-label="Разделы">
+          <span class="footer__title">Разделы</span>
+          <a href="#/" data-section="products">Кредиты</a>
+          <a href="#/" data-section="calc">Калькулятор</a>
+          <a href="#/" data-section="how">Как получить</a>
+          <a href="#/" data-section="faq">Частые вопросы</a>
+        </nav>
+        <nav class="footer__col" aria-label="Для сотрудников">
+          <span class="footer__title">Для сотрудников</span>
+          <a href="#/bank">Кабинет администратора</a>
+        </nav>
       </div>
-    </div>
-  </header>
-  <div class="megamenu" id="megamenu" role="dialog" aria-modal="true" aria-label="Меню" hidden></div>
-
-
-  <main id="view" class="container"></main>
-
-  <footer class="a-foot">
-    <div class="a-foot__in">
-      <div class="a-foot__brand"><span class="ahdr__mark">₽</span><div><b>Альфа Бизнес · Кредитный кабинет</b><p>Прототип для хакатона «Альфа Будущее». Все компании, суммы и ставки синтетические, интеграции — локальные моки.</p></div></div>
-      <nav class="a-foot__links"><a href="#/products">Кредиты</a><a href="#" data-do="calc">Калькулятор</a><a href="#" data-do="goto" data-sec="how">Как получить</a><a href="#" data-do="goto" data-sec="faq">Вопросы</a><a href="#/bank">Кабинет банка</a></nav>
     </div>
   </footer>
 
   <div id="modal-root"></div>
-  <div id="notices" class="notices" aria-live="polite"></div>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
-
-  <script src="icons.js"></script>
-  <script src="app.js"></script>
-  <script src="nav.js"></script>
-  <script src="cabinet.js"></script>
-  <script src="score.js"></script>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
 </body>
 </html>

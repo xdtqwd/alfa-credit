@@ -242,7 +242,7 @@ func TestConcurrentPaymentsConsistent(t *testing.T) {
 		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusApproved} {
 			x.Transition(s, "test", "", time.Now())
 		}
-		d := domain.Decision{Type: domain.DecisionApproved}
+		d := domain.Decision{Type: domain.DecisionApproved, Final: true}
 		d.SetOffer(domain.NewQuote(300_000, 21.5, 3))
 		x.Decision = &d
 		return nil
@@ -286,7 +286,7 @@ func TestConcurrentSignCreditsOnce(t *testing.T) {
 		for _, s := range []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusApproved, domain.StatusSigning} {
 			x.Transition(s, "test", "", time.Now())
 		}
-		d := domain.Decision{Type: domain.DecisionApproved}
+		d := domain.Decision{Type: domain.DecisionApproved, Final: true}
 		d.SetOffer(domain.NewQuote(1_000_000, 19.9, 12))
 		x.Decision = &d
 		return nil

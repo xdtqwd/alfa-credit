@@ -99,8 +99,26 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}
 	a = call("GET", "/api/v1/applications/"+a.ID, nil)
-	if a.Status != domain.StatusApproved {
-		t.Fatalf("status = %s, decision %+v", a.Status, a.Decision)
+	if a.Status != domain.StatusApproved || a.Decision.Final {
+		t.Fatalf("level 1 must end with a preliminary approval: %s, decision %+v", a.Status, a.Decision)
+	}
+	// уровень 2: принять предварительные условия → полная анкета → окончательное решение
+	a = call("POST", "/api/v1/applications/"+a.ID+"/accept", nil)
+	if a.Status != domain.StatusFullForm {
+		t.Fatalf("after preliminary accept status = %s", a.Status)
+	}
+	call("PATCH", "/api/v1/applications/"+a.ID, map[string]any{"full_form": map[string]any{
+		"employees": 25, "premises": "own", "purpose_details": "Открытие второго магазина в центре города",
+		"collateral": map[string]any{"type": "none"}, "statements_consent": true,
+	}})
+	call("POST", "/api/v1/applications/"+a.ID+"/submit", nil)
+	cur, _ := repo.Get(t.Context(), a.ID)
+	if err := w.Step(t.Context(), cur); err != nil {
+		t.Fatal(err)
+	}
+	a = call("GET", "/api/v1/applications/"+a.ID, nil)
+	if a.Status != domain.StatusApproved || !a.Decision.Final {
+		t.Fatalf("level 2 must end with a final approval: %s, decision %+v", a.Status, a.Decision)
 	}
 	call("POST", "/api/v1/applications/"+a.ID+"/accept", nil)
 	a = call("POST", "/api/v1/applications/"+a.ID+"/sign", map[string]any{"confirm": true})

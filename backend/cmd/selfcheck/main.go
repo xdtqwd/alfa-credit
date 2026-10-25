@@ -26,15 +26,16 @@ import (
 )
 
 var (
-	base    = flag.String("base", "http://127.0.0.1:8080", "адрес API")
-	metrics = flag.String("metrics", "http://127.0.0.1:9090/metrics", "адрес /metrics (пусто — не проверять)")
-	token   = flag.String("token", envOr("BANK_TOKEN", "demo-bank"), "X-Bank-Token кабинета банка")
-	phone   = flag.String("phone", "79000000001", "демо-аккаунт клиента")
-	pass    = flag.String("password", "demo1234", "пароль демо-аккаунта")
-	phase   = flag.String("phase", "all", "all | submit | await")
-	number  = flag.String("number", "", "номер заявки для -phase await")
-	wait    = flag.Duration("wait", 90*time.Second, "сколько ждать решения конвейера")
-	expect  = flag.String("expect-bus", "", "ожидаемая шина: kafka | memory (пусто — любая)")
+	base       = flag.String("base", "http://127.0.0.1:8080", "адрес API")
+	metrics    = flag.String("metrics", "http://127.0.0.1:9090/metrics", "адрес /metrics (пусто — не проверять)")
+	token      = flag.String("token", envOr("BANK_TOKEN", "demo-bank"), "X-Bank-Token кабинета банка")
+	phone      = flag.String("phone", "79000000001", "демо-аккаунт клиента")
+	staffPhone = flag.String("staff-phone", "79000000005", "демо-аккаунт сотрудника банка")
+	pass       = flag.String("password", "demo1234", "пароль демо-аккаунта")
+	phase      = flag.String("phase", "all", "all | submit | await")
+	number     = flag.String("number", "", "номер заявки для -phase await")
+	wait       = flag.Duration("wait", 90*time.Second, "сколько ждать решения конвейера")
+	expect     = flag.String("expect-bus", "", "ожидаемая шина: kafka | memory (пусто — любая)")
 )
 
 func envOr(k, def string) string {
@@ -45,9 +46,10 @@ func envOr(k, def string) string {
 }
 
 type checker struct {
-	c      *http.Client
-	failed int
-	passed int
+	c           *http.Client
+	etagChecked bool
+	failed      int
+	passed      int
 }
 
 func (k *checker) ok(format string, a ...any) { k.passed++; fmt.Printf("  ✓ "+format+"\n", a...) }
@@ -120,6 +122,7 @@ type app struct {
 	Decision *struct {
 		Amount int64   `json:"amount"`
 		Rate   float64 `json:"rate"`
+		Final  bool    `json:"final"`
 	} `json:"decision"`
 	Payments    []json.RawMessage `json:"payments"`
 	NextPayment int64             `json:"next_payment"`
@@ -253,8 +256,15 @@ func (k *checker) await(a app) (app, error) {
 				if a.Score != nil {
 					score = fmt.Sprint(*a.Score)
 				}
-				k.ok("решение конвейера через %.1f с: %s, балл %s", time.Since(start).Seconds(), a.Status, score)
-				k.check(notModified, "опрос статуса: пока ничего не изменилось, сервер отвечает 304 без тела (ETag)", "ни одного 304 при опросе: ETag не работает")
+				kind := "предварительное"
+				if a.Decision != nil && a.Decision.Final {
+					kind = "окончательное"
+				}
+				k.ok("%s решение конвейера через %.1f с: %s, балл %s", kind, time.Since(start).Seconds(), a.Status, score)
+				if !k.etagChecked {
+					k.etagChecked = true
+					k.check(notModified, "опрос статуса: пока ничего не изменилось, сервер отвечает 304 без тела (ETag)", "ни одного 304 при опросе: ETag не работает")
+				}
 				return a, nil
 			}
 		} else {
@@ -279,6 +289,31 @@ func (k *checker) loan(a app) {
 	_ = r.json(&me)
 	before := me.Balance
 
+	// уровень 2: предварительные условия → полная анкета → окончательное решение
+	if a.Decision != nil && !a.Decision.Final {
+		r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/accept", nil, nil)
+		_ = r.json(&a)
+		if !k.check(r.code == 200 && a.Status == "full_form", "предварительные условия приняты — открыта полная анкета", f("принятие предварительного решения → %d %s", r.code, r.body)) {
+			return
+		}
+		r, _ = k.do("PATCH", "/api/v1/applications/"+a.ID, map[string]any{"full_form": map[string]any{
+			"employees": 12, "premises": "rent", "purpose_details": "Самопроверка: развитие бизнеса, закупка оборудования",
+			"collateral": map[string]any{"type": "none"}, "statements_consent": true,
+		}}, nil)
+		k.check(r.code == 200, "полная анкета заполнена: о бизнесе, обеспечение, согласие на выписки", f("полная анкета → %d %s", r.code, r.body))
+		r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/submit", nil, nil)
+		_ = r.json(&a)
+		if !k.check(r.code == 200 && a.Status == "verification", "полная анкета отправлена на окончательное решение", f("отправка полной анкеты → %d %s", r.code, r.body)) {
+			return
+		}
+		var err error
+		if a, err = k.await(a); err != nil {
+			return
+		}
+		if !k.check(a.Status == "approved" && a.Decision != nil && a.Decision.Final, "кредит одобрен окончательно", f("окончательное решение: %s", a.Status)) {
+			return
+		}
+	}
 	r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/accept", nil, nil)
 	_ = r.json(&a)
 	k.check(r.code == 200 && a.Status == "signing", "условия приняты", f("принятие → %d %s", r.code, r.body))
@@ -323,7 +358,27 @@ func (k *checker) bankSide(a app) {
 		k.check(r.code == 200 && len(entries) >= 3, f("журнал аудита: %s", strings.Join(acts, ", ")), f("аудит → %d, записей %d", r.code, len(entries)))
 	}
 	r, _ = k.do("GET", "/api/v1/bank/applications", nil, nil)
-	k.check(r.code == 401, "без X-Bank-Token кабинет банка закрыт (401)", f("кабинет банка без токена → %d", r.code))
+	k.check(r.code == 403, "клиенту кабинет банка закрыт (403)", f("кабинет банка с сессией клиента → %d", r.code))
+
+	// сотрудник банка входит своей учётной записью — отдельная сессия, токен не нужен
+	jar, _ := cookiejar.New(nil)
+	staff := &checker{c: &http.Client{Jar: jar, Timeout: k.c.Timeout}}
+	r, _ = staff.do("GET", "/api/v1/bank/applications", nil, nil)
+	k.check(r.code == 401, "без входа и без X-Bank-Token кабинет банка закрыт (401)", f("кабинет банка без входа → %d", r.code))
+	r, _ = staff.do("POST", "/api/v1/auth/login", map[string]string{"phone": *staffPhone, "password": *pass}, nil)
+	var me struct {
+		Role string `json:"role"`
+	}
+	_ = r.json(&me)
+	if !k.check(r.code == 200 && me.Role == "employee", "вход сотрудника банка (роль employee)", f("вход сотрудника → %d, роль %q", r.code, me.Role)) {
+		return
+	}
+	r, _ = staff.do("GET", "/api/v1/bank/applications?q="+url.QueryEscape(a.Number), nil, nil)
+	rows = nil
+	_ = r.json(&rows)
+	k.check(r.code == 200 && len(rows) == 1, "сотрудник видит заявку в очереди по своей сессии", f("очередь сотрудника → %d, найдено %d", r.code, len(rows)))
+	r, _ = staff.do("GET", "/api/v1/applications", nil, nil)
+	k.check(r.code == 403, "сотрудник не действует от имени клиента (403)", f("заявки клиента сотруднику → %d", r.code))
 }
 
 func (k *checker) api() {
