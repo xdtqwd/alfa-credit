@@ -1,13 +1,14 @@
 // Главная: продуктовая страница кредитов для бизнеса — вёрстка по макету Figma «УККП 2» (design/figma-main.json).
-// Все действия прежние: калькулятор считает сервер, «Оформить» открывает анкету продукта,
-// «Рассчитать» переносит продукт в калькулятор, вопросы раскрываются.
+// Калькулятор считает сервер; под ним — форма 1-го уровня (features/apply-form.js), к которой ведут все
+// «Оформить»; «Рассчитать» переносит продукт в калькулятор, вопросы раскрываются.
 import { api } from '../core/api.js';
 import { $, on, storage } from '../core/dom.js';
 import { esc, fmt, months, rate, rub, shortRub } from '../core/format.js';
-import { session, product } from '../core/session.js';
+import { session, product, isStaff } from '../core/session.js';
 import { accordion } from '../ui/accordion.js';
+import { toast } from '../ui/feedback.js';
 import { calcFields, bindCalc, createQuoter } from '../features/calculator.js';
-import { startApplication } from '../features/loan.js';
+import { applyFormHtml, bindApplyForm } from '../features/apply-form.js';
 
 const IMG = 'img/landing/';
 
@@ -139,6 +140,8 @@ export default async function landing(root, { signal, scroll }) {
       </div>
     </section>
 
+    ${applyFormHtml()}
+
     <section class="lp-section lp-section--benefits" id="benefits">
       <div class="lp-container">
         <div class="lp-cards4 lp-benefits">${BENEFITS.map(
@@ -234,7 +237,7 @@ export default async function landing(root, { signal, scroll }) {
   // «Залог» в «Вам понадобится» — только когда он нужен: кредит больше порога обеспечения (у овердрафта анкета одна)
   let security = null;
   const paintNeed = () => {
-    $('#need-collateral', root).hidden = !(security && !p.express && amount > security.required_from);
+    $('#need-collateral', root).hidden = !(security && amount > security.required_from);
   };
   api('GET', '/security-rules')
     .then((r) => {
@@ -261,8 +264,10 @@ export default async function landing(root, { signal, scroll }) {
     bindCalc(box, p, (v) => {
       ({ amount, term } = v);
       recalc();
+      form?.sync();
     });
     recalc();
+    form?.sync();
   };
   // продукт калькулятора выбирается кнопкой «Рассчитать» в карточке продукта
   const pick = (id) => {
@@ -271,7 +276,29 @@ export default async function landing(root, { signal, scroll }) {
     term = p.default_term;
     paintFields();
   };
+  let form = null;
   paintFields();
+
+  // --- форма заявки под калькулятором: кредит, сумма и срок у них общие ---
+  form = bindApplyForm(root, {
+    signal,
+    credit: () => ({ p, amount, term }),
+    setCredit: (patch) => {
+      if (patch.product) return pick(patch.product);
+      if (patch.amount) amount = patch.amount;
+      if (patch.term) term = patch.term;
+      paintFields();
+    },
+  });
+  // все «Оформить» на главной ведут к форме; из карточки — сразу с выбранным кредитом
+  const toForm = (productId) => {
+    if (isStaff()) {
+      toast('Кредит оформляет представитель компании — вы вошли как сотрудник банка', { error: true });
+      return;
+    }
+    if (productId && productId !== p.id) pick(productId);
+    $('#apply-form', root).scrollIntoView({ behavior: 'smooth' });
+  };
 
   // --- действия ---
   on(
@@ -284,8 +311,8 @@ export default async function landing(root, { signal, scroll }) {
     },
     signal,
   );
-  on(root, 'click', '[data-calc-apply]', () => startApplication(p.id, amount, term), signal);
-  on(root, 'click', '[data-start]', (_, el) => startApplication(el.dataset.start || null), signal);
+  on(root, 'click', '[data-calc-apply]', () => toForm(), signal);
+  on(root, 'click', '[data-start]', (_, el) => toForm(el.dataset.start || null), signal);
 
   if (scroll) requestAnimationFrame(() => $(`#${scroll}`, root)?.scrollIntoView({ behavior: 'smooth' }));
 }

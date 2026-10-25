@@ -65,6 +65,23 @@ async function level1(page, inn, amount = 0) {
   await page.locator('#prescore-result').scrollIntoViewIfNeeded();
 }
 
+/** Форма заявки на главной (под калькулятором): компания, выручка из ФНС → предварительный расчёт. */
+async function landingForm(page, inn) {
+  await page.waitForSelector('#af-inn');
+  await sleep(900);
+  await caption(page, 'Форма заявки — прямо под калькулятором, без входа: сумма и срок уже перенесены', 2000);
+  await page.selectOption('#af-inn', inn);
+  await page.waitForSelector('#af-company:not([hidden])');
+  await caption(page, 'Компания — из ЕГРЮЛ, выручку подставляем из ФНС одной кнопкой', 0);
+  await page.locator('#af-company').scrollIntoViewIfNeeded();
+  await sleep(700);
+  await page.click('[data-use-fns]');
+  await sleep(1200);
+  await page.click('#af-prescore');
+  await page.waitForSelector('#prescore-result');
+  await page.locator('#prescore-result').scrollIntoViewIfNeeded();
+}
+
 /** Вход через Госуслуги (демо-окно ЕСИА) → 2-й уровень анкеты. */
 async function esia(page) {
   await page.click('#esia-go');
@@ -111,9 +128,9 @@ async function submitLevel2(page) {
     }
 
     // 2. «Оформить онлайн» → 1-й уровень с параметрами калькулятора, без входа
-    await caption(page, '«Оформить онлайн» — сумма и срок переносятся, входить пока не нужно', 1500);
+    await caption(page, '«Оформить онлайн» — к форме заявки ниже, входить пока не нужно', 1500);
     await page.click('#calc [data-calc-apply]');
-    await level1(page, '7701234567');
+    await landingForm(page, '7701234567');
     await caption(page, 'Упрощённый скоринг за доли секунды: реестр, ФНС и нагрузка — пока без кредитной истории', 3200);
 
     // 3. 2-й уровень: Госуслуги, документы, обеспечение

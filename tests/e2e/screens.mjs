@@ -38,7 +38,18 @@ async function login(page, phone) {
   await page.click('#auth-form button[type=submit]');
   await page.waitForSelector('#requisites');
 }
-/** 1-й уровень — предварительный расчёт без входа. */
+/** Форма заявки на главной: «Оформить онлайн» → компания из демо-списка → выручка из ФНС. */
+async function landingForm(page, inn = '7701234567') {
+  await page.goto(BASE + '/#/');
+  await page.waitForSelector('#af-form');
+  await page.click('#calc [data-calc-apply]');
+  await page.selectOption('#af-inn', inn);
+  await page.waitForSelector('#af-company:not([hidden])');
+  await page.click('[data-use-fns]');
+  await sleep(800);
+}
+
+/** 1-й уровень — страница предварительного расчёта (кабинет → «Новый кредит»). */
 async function level1(page, { product = 'business-dev', amount, inn = '7701234567', obligations } = {}) {
   await page.goto(BASE + '/#/apply');
   await page.waitForSelector('#ap-inn');
@@ -96,10 +107,11 @@ const top = async (page) => {
   await login(page, '79000000001');
   await sleep(400);
   await shot(page, 'profile');
-  await level1(page);
-  await top(page);
-  await shot(page, 'apply');
-  await prescore(page);
+  await landingForm(page);
+  await page.locator('#apply-form .af__card').screenshot({ path: `${OUT}/apply.png` });
+  await page.click('#af-prescore');
+  await page.waitForSelector('#prescore-result');
+  await sleep(600);
   await shotOf(page, 'preliminary', '#prescore-result');
   await page.click('#esia-go');
   await page.waitForSelector('.esia__person.is-on');

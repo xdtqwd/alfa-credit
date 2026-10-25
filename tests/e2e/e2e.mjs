@@ -179,24 +179,45 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert(await page.locator('[data-header=login]').isVisible(), 'нет кнопки «Войти»');
   });
 
-  await test('«Оформить» ведёт на 1-й уровень без входа: из карточки — с кредитом, с первого экрана — без, из калькулятора — с его условиями', async (page) => {
+  await test('Все «Оформить» на главной ведут к форме заявки под калькулятором: из карточки — с кредитом, из калькулятора — с его условиями', async (page) => {
+    const formInView = () => page.waitForFunction(() => Math.abs(document.getElementById('apply-form').getBoundingClientRect().top) < 120);
     await page.goto(BASE + '/');
-    await page.click('#products [data-start="working-capital"]');
-    await page.waitForSelector('#ap-inn');
-    assert(page.url().endsWith('#/apply'), 'открыт не 1-й уровень: ' + page.url());
-    assert((await page.locator('#auth-phone').count()) === 0, 'расчёт не должен требовать входа');
-    assert((await page.locator('[data-product="working-capital"].is-on').count()) === 1, 'кредит из карточки не сохранился');
-    await page.goto(BASE + '/');
-    await page.click('.lp-hero [data-start]');
-    await page.waitForSelector('#ap-inn');
-    assert((await page.locator('[data-product].is-on').count()) === 0, 'с первого экрана кредит выбирает сам клиент');
-    assert(await page.isDisabled('#prescore'), 'без кредита, компании и выручки рассчитывать нечего');
-    await page.goto(BASE + '/');
+    await page.waitForSelector('#af-form');
+    const order = await page.$$eval('.lp-section', (els) => els.map((e) => e.id));
+    assert(
+      order.indexOf('apply-form') === order.indexOf('calc') + 1,
+      'форма должна идти сразу после «Рассчитайте выгоду»: ' + order.join(', '),
+    );
     await setAmount(page, '#calc', 4000000);
     await page.click('#calc [data-calc-apply]');
-    await page.waitForSelector('[data-product="business-dev"].is-on');
-    assert(norm(await page.inputValue('#ap-calc [data-calc=amount-text]')) === '4 000 000 ₽', 'сумма калькулятора не перенеслась');
+    await formInView();
+    assert(!page.url().includes('#/apply') && !page.url().includes('#/cabinet'), 'страница не должна меняться: ' + page.url());
+    assert(norm(await page.inputValue('#af-amount')) === '4 000 000 ₽', 'сумма калькулятора не перенеслась в форму');
+    await page.selectOption('#af-term', '36');
+    assert(norm(await page.inputValue('#calc [data-calc=term-text]')) === '36 месяцев', 'срок из формы не вернулся в калькулятор');
+    await page.click('#products [data-start="working-capital"]');
+    await formInView();
+    assert((await page.inputValue('#af-product')) === 'working-capital', 'кредит из карточки не выбран в форме');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.click('.lp-hero [data-start]');
+    await formInView();
     assert(norm(await page.textContent('.badge-demo')) === 'демо', 'ИНН из списка должен быть помечен как демо');
+  });
+
+  await test('Форма на главной: обязательные поля подсвечиваются, расчёт без входа ведёт к Госуслугам и документам', async (page) => {
+    await page.goto(BASE + '/');
+    await page.waitForSelector('#af-form');
+    await page.click('#af-prescore');
+    assert((await page.locator('#apply-form .af-field.is-error').count()) === 2, 'без ИНН и выручки должны подсветиться оба поля');
+    assert(norm(await page.textContent('#af-inn-hint')).includes('Поле обязательно для заполнения'), 'нет текста ошибки');
+    await page.selectOption('#af-inn', '7701234567');
+    await page.waitForSelector('#af-company:not([hidden])');
+    assert(!norm(await page.textContent('#af-inn-hint')).includes('обязательно'), 'ошибка не снялась после выбора');
+    await page.click('[data-use-fns]');
+    await page.click('#af-prescore');
+    await page.waitForSelector('#prescore-result[data-decision=approved]');
+    await esia(page);
+    assert(norm(await page.textContent('[data-key="identity"]')).includes('Смирнов'), 'после формы на главной не открылся 2-й уровень');
   });
 
   await test('Калькулятор показывает расчёт сервера (единый источник)', async (page) => {
@@ -463,7 +484,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
       await route.continue();
     });
     await page.goto(BASE + '/#/');
-    await page.click('#products [data-start="business-dev"]');
+    await page.evaluate(() => (location.hash = '#/apply')); // уходим, пока расчёт главной ещё в пути
     await page.waitForSelector('#ap-inn');
     await page.waitForTimeout(1500); // ответы калькулятора приходят на уже закрытую страницу
     await page.unroute('**/api/v1/calc');
