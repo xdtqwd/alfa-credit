@@ -12,7 +12,7 @@ const newKey = () =>
     ? crypto.randomUUID()
     : [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, '0')).join('');
 
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(message, { status = 0, field = '', code = '', offline = false } = {}) {
     super(message);
     Object.assign(this, { status, field, code, offline });

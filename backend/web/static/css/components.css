@@ -210,6 +210,7 @@
 .header--platinum {
   background: transparent;
   border-bottom: 0;
+  margin-bottom: -120px; /* шапка лежит поверх первого экрана; на узких экранах — на высоту шапки (ниже) */
 }
 .header--platinum .nav__link {
   color: var(--ink);
@@ -297,9 +298,6 @@
 .header--platinum .header__in {
   height: 120px;
 }
-.header--platinum {
-  margin-bottom: -120px; /* шапка лежит поверх первого экрана; на узких экранах — на высоту шапки (ниже) */
-}
 .header--platinum .logo__sign {
   width: 54px; /* знак в макете — 39×60; у SVG поле 18×24 вокруг знака 13×20 */
   height: 72px;
@@ -336,11 +334,10 @@
   .header--site .nav__link::before {
     display: none;
   }
-}
 
-/* мобильная навигация: разделы — второй строкой с прокруткой, без наложений на правую часть */
-@media (max-width: 960px) {
+  /* мобильная навигация: разделы — второй строкой с прокруткой, без наложений на правую часть */
   .header__in {
+    position: relative;
     gap: 16px;
   }
   .header .nav {
@@ -371,6 +368,8 @@
     border: 0;
     border-radius: var(--radius-l);
     box-shadow: var(--shadow-pop);
+    max-height: calc(100dvh - var(--header-h) - 16px);
+    overflow-y: auto;
   }
   .header--site.is-open .nav__link {
     padding: 12px;
@@ -382,16 +381,9 @@
   .header--site .nav__more {
     display: none;
   }
-  .header--site.is-open .nav {
-    max-height: calc(100dvh - var(--header-h) - 16px);
-    overflow-y: auto;
-  }
   .header--site .nav__dd {
     display: none;
   } /* мега-меню услуг — только на компьютере */
-  .header__in {
-    position: relative;
-  }
   .header--site.is-open .nav__link.is-active::after {
     display: none;
   }
