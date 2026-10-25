@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -238,7 +239,7 @@ func TestGzipAndStaticETag(t *testing.T) {
 
 func TestReadyzReportsDependencies(t *testing.T) {
 	h := newHarness(t, func(s *Server) {
-		s.Ready = map[string]func(ctx context.Context) error{"kafka": func(context.Context) error { return errors.New("broker down") }}
+		s.Ready = map[string]func(ctx context.Context) error{"db-replica": func(context.Context) error { return errors.New("broker down") }}
 	})
 	r, b := h.do(h.client(), "GET", "/readyz", nil, nil)
 	if r.StatusCode != 503 || !strings.Contains(string(b), "broker down") || !strings.Contains(string(b), `"storage":"ok"`) {
@@ -257,5 +258,56 @@ func TestMetricsCarryRoutePattern(t *testing.T) {
 	}
 	if got := obs.Default.CounterValue("http_requests_total", "route", "GET /api/v1/me", "code", "200"); got != before+1 {
 		t.Fatalf("route label not recorded: before=%d after=%d", before, got)
+	}
+}
+
+// Kafka для API — некритичная зависимость: при её отказе /readyz отвечает 200 «degraded»
+// (балансировщик не снимает API, заявки копятся в outbox), а отказ хранилища — 503.
+func TestReadyzDegradesOnOptionalDependency(t *testing.T) {
+	h := newHarness(t, func(s *Server) {
+		s.Degradable = map[string]func(context.Context) error{"kafka": func(context.Context) error { return errors.New("broker down") }}
+	})
+	r, b := h.do(h.client(), "GET", "/readyz", nil, nil)
+	if r.StatusCode != 200 || !bytes.Contains(b, []byte(`"degraded"`)) || !bytes.Contains(b, []byte("broker down")) {
+		t.Fatalf("optional dependency failure must give 200 degraded, got %d %s", r.StatusCode, b)
+	}
+	h2 := newHarness(t, func(s *Server) {
+		s.Ready = map[string]func(context.Context) error{"db": func(context.Context) error { return errors.New("db down") }}
+	})
+	if r, _ := h2.do(h2.client(), "GET", "/readyz", nil, nil); r.StatusCode != 503 {
+		t.Fatalf("critical dependency failure must give 503, got %d", r.StatusCode)
+	}
+}
+
+// COOP отдаётся только там, где браузер его применяет: HTTPS (в т.ч. за шлюзом) и localhost.
+// На http://<ip|домен> Chrome игнорирует заголовок и пишет ошибку в консоль (так было при открытии
+// через host.docker.internal).
+func TestCOOPOnlyOnTrustworthyOrigins(t *testing.T) {
+	h := securityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	for _, c := range []struct {
+		host, proto string
+		want        bool
+	}{
+		{"localhost:8080", "", true},
+		{"127.0.0.1:8080", "", true},
+		{"[::1]:8080", "", true},
+		{"app.localhost", "", true},
+		{"host.docker.internal:8080", "", false},
+		{"192.168.1.20:8080", "", false},
+		{"credit.example.ru", "https", true},
+	} {
+		req, _ := http.NewRequest("GET", "/", nil)
+		req.Host = c.host
+		if c.proto != "" {
+			req.Header.Set("X-Forwarded-Proto", c.proto)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get("Cross-Origin-Opener-Policy") != ""; got != c.want {
+			t.Errorf("host %s proto %q: COOP=%v, want %v", c.host, c.proto, got, c.want)
+		}
+		if rec.Header().Get("Content-Security-Policy") == "" {
+			t.Errorf("host %s: остальные заголовки безопасности должны отдаваться всегда", c.host)
+		}
 	}
 }

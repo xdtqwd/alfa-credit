@@ -276,7 +276,8 @@ func run(log *slog.Logger, addr string) error {
 		Svc: svc, Auth: authSvc, CookieSecure: env("COOKIE_SECURE", "false") == "true", Repo: repo, Log: log,
 		Static: web.Static(), Version: version, BankToken: env("BANK_TOKEN", "demo-bank"),
 		Idem: idem, Limiter: httpapi.NewRateLimiter(envFloat("RATE_LIMIT_RPS", 20), envFloat("RATE_LIMIT_BURST", 60)),
-		RequestTimeout: reqTimeout, Ready: ready,
+		// для API шина некритична: при недоступной Kafka заявки принимаются, события ждут в outbox
+		RequestTimeout: reqTimeout, Degradable: ready,
 		Platform: func(ctx context.Context) map[string]any {
 			out := map[string]any{"storage": storeKind, "bus": busKind, "role": role}
 			if pg != nil {

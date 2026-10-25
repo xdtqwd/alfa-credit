@@ -6,3 +6,4 @@ node_modules/
 e2e-fail-*.png
 demo/_raw/
 demo/*.webm
+.DS_Store
