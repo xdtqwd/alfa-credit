@@ -113,16 +113,42 @@ async function fillAndSubmit(page) {
     await page.waitForSelector('#bank-table table');
     await caption(page, 'Кабинет сотрудника банка: заявка идёт по конвейеру — события через Kafka, данные в PostgreSQL', 0);
     await page.waitForFunction(
-      () => /Одобрено|Контрпредложение|Отказ|Уточнение/.test(document.querySelector('#bank-table tbody tr')?.textContent || ''),
+      () => /одобрен|другие условия|отказ|уточн/i.test(document.querySelector('#bank-table tbody tr')?.textContent || ''),
       null,
       { timeout: 30000 },
     );
-    await caption(page, 'Скоринг принял решение: балл, условия и причина видны банку', 3000);
+    await caption(page, 'Скоринг принял предварительное решение: балл, условия и причина видны банку', 3000);
 
-    // 4. Клиент видит результат, подписывает, получает деньги и платит
+    // 4. Клиент видит предварительное решение и заполняет полную анкету
     await page.goto(appUrl);
     await page.waitForSelector('#decision.decision--ok', { timeout: 30000 });
-    await caption(page, 'Клиент сразу видит решение и что от него нужно — простыми словами', 3000);
+    await caption(page, 'Клиент сразу видит предварительное решение и что от него нужно — простыми словами', 3000);
+    await page.click('#todo [data-action=accept]');
+    await page.waitForSelector('#ff-employees');
+    await caption(page, 'Подробности о бизнесе спрашиваем только после предварительного одобрения', 0);
+    await page.fill('#ff-employees', '25');
+    await sleep(500);
+    await page.click('[data-premises=rent]');
+    await sleep(500);
+    await page.fill('#ff-purpose', 'Открытие второго магазина и закупка торгового оборудования');
+    await sleep(800);
+    await page.click('[data-collateral=realty]');
+    await page.fill('#ff-coll-value', '20000000');
+    if (await page.isChecked('#ff-guarantor')) await page.uncheck('#ff-guarantor'); // залога хватает, поручитель не нужен
+    await caption(page, 'Залог недвижимостью на всю сумму — ставка станет ниже на 1 п.п.', 2200);
+    await page.check('#ff-consent');
+    await page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout: 8000 });
+    await sleep(600);
+    await page.click('#submit');
+    await page.waitForSelector('.stepper');
+    await caption(page, 'Банк проверяет полную анкету и выносит окончательное решение', 0);
+    await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
+      timeout: 30000,
+    });
+    await page.waitForSelector('#decision[data-decision=approved] .actions');
+    await caption(page, 'Кредит одобрен окончательно — можно подписывать', 3000);
+
+    // 5. Подписание, деньги и платёж
     await page.click('#todo [data-action=accept]');
     await page.waitForSelector('#sign-ok');
     await caption(page, 'Подписание простой электронной подписью прямо в кабинете', 1600);
@@ -139,7 +165,7 @@ async function fillAndSubmit(page) {
     });
     await caption(page, 'Первый платёж списан со счёта строго по графику', 2500);
 
-    // 5. Личный кабинет
+    // 6. Личный кабинет
     await page.goto(BASE + '/#/cabinet/credits');
     await page.waitForSelector('.loan');
     await caption(page, 'Личный кабинет: профиль и реквизиты, заявки, кредиты, сообщения', 3000);
@@ -149,7 +175,7 @@ async function fillAndSubmit(page) {
     await page.click('[data-header=logout]');
     await page.waitForSelector('[data-header=login]');
 
-    // 6. Отказ с понятным объяснением
+    // 7. Отказ с понятным объяснением
     await caption(page, 'Другой сценарий: у компании просрочки в БКИ', 1800);
     await login(page, '79000000003');
     await page.click('[data-header=new-loan]');
