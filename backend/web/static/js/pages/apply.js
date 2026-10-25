@@ -3,24 +3,25 @@
 // Дальше — вход через Госуслуги: тогда создаётся заявка и открывается 2-й уровень (документы).
 // Черновик хранится в браузере: заявки на сервере до входа нет.
 import { api } from '../core/api.js';
-import { $, $$, on } from '../core/dom.js';
+import { $, $$, on, storage } from '../core/dom.js';
 import { esc, fmt, rub, months, rate, digits } from '../core/format.js';
-import { session, product, isStaff } from '../core/session.js';
+import { navigate } from '../core/router.js';
+import { session, product, putApp, isStaff } from '../core/session.js';
 import { toast } from '../ui/feedback.js';
 import { icon } from '../ui/icons.js';
 import { calcFields, bindCalc, createQuoter } from '../features/calculator.js';
-import {
-  loadDraft,
-  saveDraft,
-  companyOptions,
-  companyOption,
-  companyLines,
-  revenueHint,
-  level1Body,
-  prescoreCard,
-  continueToLevel2,
-} from '../features/level1.js';
+import { esiaLogin } from '../features/esia.js';
+import { offer, compare, reasons, scoreBlock } from '../features/decision.js';
 import { pageHead, levels, paintProgress, showFieldError } from './parts.js';
+
+const KEY = 'apply';
+
+const TITLES = {
+  approved: ['ok', 'Предварительно одобрено'],
+  counter_offer: ['warn', 'Предварительно: можем выдать на других условиях'],
+  need_info: ['warn', 'Нужно уточнить данные'],
+  rejected: ['bad', 'Сейчас не можем выдать кредит'],
+};
 
 function layout(d, options) {
   return `<div class="container">
@@ -47,7 +48,7 @@ function layout(d, options) {
           <div class="field" data-field="inn"><label for="ap-inn">ИНН компании или ИП <span class="badge-demo">демо</span></label>
             <select class="input select" id="ap-inn">
               <option value="">Выберите компанию</option>
-              ${options.map((c) => companyOption(c, d.inn)).join('')}
+              ${options.map((c) => `<option value="${esc(c.inn)}" ${c.inn === d.inn ? 'selected' : ''}>${esc(c.name)} · ИНН ${esc(c.inn)}${c.hint ? ` — ${esc(c.hint)}` : ''}</option>`).join('')}
             </select>
             <span class="field__hint">В демо ИНН выбирается из списка: для этих компаний заранее известны ответы реестра, ФНС и БКИ. В боевой версии ИНН вводится вручную.</span></div>
           <div class="company-box" id="ap-company" hidden></div>
@@ -88,16 +89,20 @@ function layout(d, options) {
 
 export default async function apply(root, { signal }) {
   root.className = 'page';
-  const options = await companyOptions();
+  const companies = await api('GET', '/demo/companies').catch(() => []);
   if (signal.aborted) return;
   const me = session.me && !isStaff() ? session.me : null;
-  const d = loadDraft();
+  const d = { product_id: null, amount: 0, term_months: 0, purpose: '', inn: '', revenue: 0, obligations: 0, ...storage.get(KEY, {}) };
   if (!d.inn && me) d.inn = me.company.inn;
   let p = d.product_id ? product(d.product_id) : null;
   if (!p) d.product_id = null;
   let company = null; // компания из реестра по выбранному ИНН
   let result = null; // ответ предварительного расчёта
-  const save = () => saveDraft(d);
+  const save = () => storage.set(KEY, d);
+
+  const options = [...companies];
+  if (me && !options.some((c) => c.inn === me.company.inn))
+    options.unshift({ inn: me.company.inn, name: me.company.name, hint: 'ваша компания' });
   root.innerHTML = layout(d, options);
 
   // ---------- сводка и готовность ----------
@@ -179,8 +184,11 @@ export default async function apply(root, { signal }) {
   const paintCompany = () => {
     const box = $('#ap-company', root);
     box.hidden = !company;
-    if (company) box.innerHTML = companyLines(company);
-    $('#ap-revenue-hint', root).innerHTML = revenueHint(company);
+    if (company)
+      box.innerHTML = `<b>${esc(company.name)}</b><span>ИНН ${esc(company.inn)} · ОГРН ${esc(company.ogrn)} · ${company.status === 'active' ? 'действует' : 'ликвидирована'}</span><span>${esc(company.address)}${company.director ? ` · руководитель ${esc(company.director)}` : ''}</span>`;
+    $('#ap-revenue-hint', root).innerHTML = company?.revenue_last_year
+      ? `По данным ФНС за прошлый год: ${rub(company.revenue_last_year)} · <button type="button" class="btn--link" data-use-fns>подставить</button>`
+      : '';
   };
   const loadCompany = async () => {
     company = null;
@@ -197,11 +205,38 @@ export default async function apply(root, { signal }) {
   };
 
   // ---------- результат ----------
+  const identified = () => !!(session.me?.identity && session.me.company?.inn === d.inn);
   const paintResult = () => {
     const box = $('#ap-result', root);
-    box.innerHTML = prescoreCard(result, d.inn);
+    if (!result) return;
+    const dec = result.decision;
+    const [tone, title] = TITLES[dec.type];
+    const passed = dec.type === 'approved' || dec.type === 'counter_offer';
+    const terms =
+      dec.type === 'counter_offer' && dec.requested
+        ? `<p class="muted">Сравните, что вы просили и что предлагает банк:</p>${compare(dec.requested, dec)}`
+        : dec.type === 'approved'
+          ? offer(dec)
+          : '';
+    const llc = result.company?.type !== 'ИП';
+    const next = passed
+      ? `<div class="note note--box">${icon('info', 20)}<span><b>Дальше — 2-й уровень.</b> Вход через Госуслуги и документы: ${llc ? 'паспорт руководителя, ' : ''}обеспечение для суммы больше 5 млн ₽${llc ? ', протокол о крупной сделке — больше 25 млн ₽' : ''}. Затем полный скоринг с кредитной историей и окончательное решение.</span></div>
+        <div class="actions"><button class="btn btn--esia" id="esia-go">${identified() ? 'Продолжить — личность подтверждена' : 'Войти через Госуслуги и продолжить'}</button></div>`
+      : '';
+    box.innerHTML = `<section class="card decision decision--${tone}" id="prescore-result" data-decision="${dec.type}">
+      <h2>${title}</h2>${terms}${reasons('Почему так', dec.reasons)}${reasons(dec.type === 'need_info' ? 'Что сделать' : 'Что можно сделать', dec.advice)}${scoreBlock(result, 'Упрощённый скоринг', { zones: false })}${next}
+    </section>`;
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+
+  const body = () => ({
+    product_id: d.product_id,
+    amount: d.amount,
+    term_months: d.term_months,
+    purpose: d.purpose,
+    inn: d.inn,
+    financials: { annual_revenue: d.revenue, monthly_obligations: d.obligations },
+  });
 
   // ---------- начальное состояние ----------
   paintCalc();
@@ -263,7 +298,7 @@ export default async function apply(root, { signal }) {
       btn.disabled = true;
       btn.textContent = 'Считаем…';
       try {
-        result = await api('POST', '/prescore', level1Body(d));
+        result = await api('POST', '/prescore', body());
         if (signal.aborted) return;
         paintResult();
       } catch (e) {
@@ -280,9 +315,21 @@ export default async function apply(root, { signal }) {
     'click',
     '#esia-go',
     async (_, btn) => {
+      if (isStaff()) {
+        toast('Кредит оформляет представитель компании — вы вошли как сотрудник банка', { error: true });
+        return;
+      }
       btn.disabled = true;
-      await continueToLevel2(d);
-      btn.disabled = false;
+      try {
+        if (!identified() && !(await esiaLogin({ inn: d.inn }))) return;
+        const a = await api('POST', '/applications', body());
+        putApp(a);
+        navigate(`/cabinet/applications/${a.id}`);
+      } catch (e) {
+        toast(e.message, { error: true });
+      } finally {
+        btn.disabled = false;
+      }
     },
     signal,
   );
