@@ -142,7 +142,7 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
           toast(t === 'login' ? `Здравствуйте, ${user.full_name.split(' ')[1] || user.full_name}` : 'Кабинет создан');
           if (isStaff(user)) {
             resolve(null);
-            navigate('/bank');
+            navigate('/bank/profile');
             return;
           }
           resolve(user);

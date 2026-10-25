@@ -505,10 +505,15 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert(await panel.isVisible(), 'панель закрылась при переходе курсора на неё');
     await page.mouse.move(720, 880); // увели курсор
     await page.waitForFunction(() => getComputedStyle(document.querySelector('#services')).visibility === 'hidden');
-    const [panelBg, headerBg] = await page.evaluate(() =>
-      ['#services', '.header'].map((q) => getComputedStyle(document.querySelector(q)).backgroundColor),
+    const [panelBg, headerBg, panelBlur] = await page.evaluate(() => [
+      ...['#services', '.header'].map((q) => getComputedStyle(document.querySelector(q)).backgroundColor),
+      getComputedStyle(document.querySelector('#services')).backdropFilter,
+    ]);
+    // панель — продолжение фона страницы: полупрозрачная платина с размытием, без сплошной заливки
+    assert(
+      /^rgba\(232, 234, 238, 0\.7\d*\)$/.test(panelBg) && panelBlur.includes('blur'),
+      `панель услуг должна сливаться с фоном: ${panelBg} ${panelBlur}`,
     );
-    assert(panelBg === 'rgb(233, 235, 238)', 'панель услуг должна быть платиновой: ' + panelBg);
     assert(headerBg === 'rgba(0, 0, 0, 0)', 'платиновая шапка прозрачна и лежит на первом экране без шва: ' + headerBg);
     await page.evaluate(() => window.scrollTo(0, 800));
     await page.waitForFunction(() => document.querySelector('.header').getBoundingClientRect().bottom <= 0);
@@ -631,23 +636,14 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert((await apiAs(page, 'GET', '/bank/applications')).status === 403, 'API кабинета банка должно отвечать клиенту 403');
   });
 
-  await test('Сотрудник банка: последний в списке входа, попадает в очередь заявок, профиль с правами, кабинет компании закрыт', async (page) => {
+  await test('Сотрудник банка: последний в списке входа, после входа — профиль, очередь заявок, кабинет компании закрыт', async (page) => {
     await page.goto(BASE + '/#/');
     await page.click('[data-header=login]');
     await page.waitForSelector('.demo__item');
     const demo = await page.$$eval('.demo__item', (els) => els.map((e) => e.dataset.demo));
     assert(demo.at(-1) === '79000000005', 'сотрудник банка должен быть последним в списке: ' + demo.join(', '));
     await page.click('.demo__item--staff');
-    await page.waitForFunction(() => location.hash === '#/bank');
-    await page.waitForSelector('#bank-platform .platform');
-    const plat = norm(await page.textContent('#bank-platform'));
-    assert(plat.includes('Хранилище') && plat.includes('Шина событий'), 'нет состояния платформы: ' + plat);
-    await page.waitForSelector('#bank-table table, #bank-table .empty');
-    const tabs = await page.$$eval('.header--cabinet .nav__link', (els) => els.map((e) => e.textContent.trim()));
-    assert(tabs.join('|') === 'Очередь заявок|Профиль', 'вкладки кабинета банка: ' + tabs.join('|'));
-    assert((await page.locator('[data-header=new-loan]').count()) === 0, 'у сотрудника не должно быть «Нового кредита»');
-
-    await page.click('.nav__link[href="#/bank/profile"]');
+    await page.waitForFunction(() => location.hash === '#/bank/profile');
     await page.waitForSelector('.staff-badge');
     const prof = norm(await page.textContent('#view'));
     for (const t of ['Соколова Анна Дмитриевна', 'Кредитный аналитик', 'АБ-04217', 'Журнал аудита по заявке']) {
@@ -655,16 +651,39 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     }
     assert((await page.locator('.perm.is-on').count()) === 3, 'у демо-сотрудника три права кабинета банка');
     await page.waitForSelector('.staff-queue');
+    const tabs = await page.$$eval('.header--cabinet .nav__link', (els) => els.map((e) => e.textContent.trim()));
+    assert(tabs.join('|') === 'Очередь заявок|Профиль', 'вкладки кабинета банка: ' + tabs.join('|'));
+    assert((await page.locator('[data-header=new-loan]').count()) === 0, 'у сотрудника не должно быть «Нового кредита»');
+
+    await page.click('.nav__link[href="#/bank"]');
+    await page.waitForSelector('#bank-platform .platform');
+    const plat = norm(await page.textContent('#bank-platform'));
+    assert(plat.includes('Хранилище') && plat.includes('Шина событий'), 'нет состояния платформы: ' + plat);
+    await page.waitForSelector('#bank-table table, #bank-table .empty');
 
     // роли не смешиваются
     await page.goto(BASE + '/#/cabinet/applications');
-    await page.waitForFunction(() => location.hash === '#/bank');
+    await page.waitForFunction(() => location.hash === '#/bank/profile');
     assert((await apiAs(page, 'GET', '/applications')).status === 403, 'сотруднику API заявок клиента должно отвечать 403');
     await page.goto(BASE + '/#/');
     await page.click('#products [data-start="working-capital"]');
     await page.waitForSelector('.toast--error');
     assert((await page.locator('#auth-phone').count()) === 0, 'сотруднику не должно открываться окно входа клиента');
     assert(norm(await page.textContent('.toast--error')).includes('сотрудник банка'), 'нет объяснения, почему нельзя оформить');
+  });
+
+  await test('Главная: «Залог» в «Вам понадобится» — только для кредита больше 5 млн, с подсказкой по наведению', async (page) => {
+    await page.goto(BASE + '/#/');
+    await page.waitForSelector('#calc [data-calc=amount-text]');
+    await page.fill('#calc [data-calc=amount-text]', '3000000');
+    await page.press('#calc [data-calc=amount-text]', 'Enter');
+    await page.waitForFunction(() => document.querySelector('#need-collateral')?.hidden === true);
+    await page.fill('#calc [data-calc=amount-text]', '10000000');
+    await page.press('#calc [data-calc=amount-text]', 'Enter');
+    await page.waitForSelector('#need-collateral', { state: 'visible' });
+    await page.hover('#need-collateral');
+    await page.waitForSelector('#tip-collateral', { state: 'visible' });
+    assert(norm(await page.textContent('#tip-collateral')).includes('5 млн'), 'в подсказке нет порога суммы');
   });
 
   await test('Клавиатура: меню услуг по фокусу и Esc, вопросы по Enter, ползунок стрелками, окно держит и возвращает фокус', async (page) => {

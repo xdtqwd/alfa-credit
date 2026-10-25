@@ -74,7 +74,7 @@ async function render() {
   controller = new AbortController();
   const { signal } = controller;
   // роли не смешиваются: сотрудник банка не открывает кабинет компании, а профиль сотрудника — только для сотрудника
-  if (m.meta.auth && isStaff()) return navigate('/bank');
+  if (m.meta.auth && isStaff()) return navigate('/bank/profile');
   if (m.path === '/bank/profile' && !isStaff()) return navigate('/bank');
 
   closeModal();

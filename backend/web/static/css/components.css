@@ -228,8 +228,11 @@
   background: #fff;
 }
 .header--platinum .services {
-  background: var(--platinum); /* один ровный цвет, без отливов */
-  box-shadow: 0 32px 48px rgba(31, 36, 38, 0.16);
+  /* продолжение фона страницы: полупрозрачная платина с размытием того, что под меню, без тени */
+  background: rgba(232, 234, 238, 0.72);
+  -webkit-backdrop-filter: blur(28px) saturate(1.1);
+  backdrop-filter: blur(28px) saturate(1.1);
+  box-shadow: none;
 }
 .header--platinum .services__side {
   border-right-color: var(--platinum-line);
@@ -284,7 +287,7 @@
 .header--site .header__right .btn--primary {
   height: 44px;
   padding: 0 24px;
-  border-radius: 22px;
+  border-radius: var(--radius);
   font: 700 16px / 1 var(--font-brand);
 }
 /* «Войти» в макете нет [ASSUMED]: на главной — в цвете кнопок макета */

@@ -25,14 +25,14 @@
   padding: 0 var(--gutter);
 }
 
-/* ---------- кнопки: красные «пилюли» [FIGMA] ---------- */
+/* ---------- кнопки: красные, скругление как у кнопок кабинета (в макете были «пилюли» 45 px) ---------- */
 .lp-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   height: 56px;
   padding: 0 25px;
-  border-radius: var(--lp-r-xl);
+  border-radius: var(--radius);
   background: var(--lp-red);
   color: var(--lp-white);
   font: 700 var(--lp-fs-m) / var(--lp-lh-m) var(--font-brand);
@@ -51,10 +51,9 @@
   font-size: var(--lp-fs-s);
   line-height: var(--lp-lh-s);
 }
-/* «Оформить онлайн» 500 × 56, радиус 30 [FIGMA] */
+/* «Оформить онлайн» 500 × 56 [FIGMA] */
 .lp-btn--block {
   width: 100%;
-  border-radius: var(--lp-r-l);
 }
 /* кнопки карточек 113 × 45, Bold 12 [FIGMA] */
 .lp-btn--sm {
@@ -262,6 +261,61 @@
 }
 .lp-need__item + .lp-need__item {
   gap: 15px; /* [FIGMA] домик 338…368, «Залог» с 383 */
+}
+.lp-need__item[hidden] {
+  display: none;
+}
+/* подсказка у «Залога» — как на alfabank.ru: пунктирная подпись, по наведению или фокусу карточка над блоком */
+.lp-need {
+  position: relative;
+}
+.lp-tip {
+  cursor: help;
+  outline: none;
+}
+.lp-tip__label {
+  border-bottom: 1px dashed var(--lp-muted);
+}
+.lp-tip:focus-visible .lp-tip__label {
+  border-radius: 4px;
+  box-shadow: var(--focus);
+}
+.lp-tip__pop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 12px);
+  z-index: 20;
+  display: grid;
+  gap: 14px;
+  padding: 24px 28px;
+  border-radius: var(--lp-r-m);
+  background: var(--lp-white);
+  box-shadow:
+    0 0 0 1px rgba(11, 31, 53, 0.06),
+    0 12px 32px rgba(11, 31, 53, 0.16);
+  color: var(--lp-ink);
+  font-size: var(--lp-fs-m);
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition:
+    opacity 0.15s,
+    transform 0.15s,
+    visibility 0s linear 0.15s;
+}
+.lp-tip__pop b {
+  font-size: var(--lp-fs-l);
+  line-height: 1.35;
+}
+.lp-need:has(.lp-tip:hover) .lp-tip__pop,
+.lp-need:has(.lp-tip:focus-visible) .lp-tip__pop {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
 }
 
 /* «Наше предложение» 550 × 430, белая, радиус 30; текст с x +25, заголовок с y +19 [FIGMA] */
