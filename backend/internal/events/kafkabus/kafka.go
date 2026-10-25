@@ -106,7 +106,7 @@ func (b *Bus) EnsureTopics(ctx context.Context) error {
 					return fmt.Errorf("create topic %s: %w", t.Topic, e)
 				}
 			}
-			return nil
+			return b.waitLeaders(ctx, events.TopicApplications, events.TopicDLQ)
 		}
 		last = err
 		select {
@@ -116,6 +116,57 @@ func (b *Bus) EnsureTopics(ctx context.Context) error {
 		}
 	}
 	return fmt.Errorf("kafka not reachable: %w", last)
+}
+
+// waitLeaders ждёт, пока у всех партиций топиков появится лидер. Сразу после создания топика брокер
+// ещё выбирает лидеров: запись в этот момент получает повторяемые ошибки и, если выборы затянулись
+// (холодный брокер в CI), исчерпывает повторы продюсера.
+func (b *Bus) waitLeaders(ctx context.Context, topics ...string) error {
+	req := kmsg.NewPtrMetadataRequest()
+	for _, name := range topics {
+		t := kmsg.NewMetadataRequestTopic()
+		t.Topic = kmsg.StringPtr(name)
+		req.Topics = append(req.Topics, t)
+	}
+	var last error
+	for attempt := 0; attempt < 100; attempt++ {
+		resp, err := req.RequestWith(ctx, b.prod)
+		last = err
+		if err == nil {
+			last = topicsReady(resp)
+			if last == nil {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("kafka topics not ready: %w", last)
+}
+
+// topicsReady — у каждого топика есть партиции, и у каждой партиции выбран лидер.
+func topicsReady(resp *kmsg.MetadataResponse) error {
+	for _, t := range resp.Topics {
+		name := ""
+		if t.Topic != nil {
+			name = *t.Topic
+		}
+		if e := kerr.ErrorForCode(t.ErrorCode); e != nil {
+			return fmt.Errorf("topic %s: %w", name, e)
+		}
+		if len(t.Partitions) == 0 {
+			return fmt.Errorf("topic %s: no partitions yet", name)
+		}
+		for _, p := range t.Partitions {
+			if e := kerr.ErrorForCode(p.ErrorCode); e != nil || p.Leader < 0 {
+				return fmt.Errorf("topic %s partition %d: leader not elected (%v)", name, p.Partition, e)
+			}
+		}
+	}
+	return nil
 }
 
 func (b *Bus) Ping(ctx context.Context) error { return b.prod.Ping(ctx) }
