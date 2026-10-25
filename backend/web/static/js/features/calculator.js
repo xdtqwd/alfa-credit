@@ -1,7 +1,7 @@
 // Калькулятор: сумма и срок — ползунком или числом с клавиатуры, платёж считает сервер (единый источник расчёта).
 import { quote } from '../core/api.js';
 import { $, debounce } from '../core/dom.js';
-import { fmt, rub, months, digits, shortRub, shortTerm } from '../core/format.js';
+import { fmt, months, digits, shortRub, shortTerm } from '../core/format.js';
 
 const pct = (v, min, max) => (max === min ? 100 : ((v - min) / (max - min)) * 100);
 
@@ -116,11 +116,3 @@ export function createQuoter(onQuote, onError, signal) {
   signal.addEventListener('abort', () => run.cancel(), { once: true });
   return (productId, amount, term) => run(productId, amount, term, ++seq);
 }
-
-/** Блок результата расчёта (используется на главной). */
-export const quoteRows = (q) => `
-  <div class="kv">
-    <div><span>Ставка</span><b>от ${String(q.rate).replace('.', ',')}%</b></div>
-    <div><span>Переплата</span><b>${rub(q.overpayment)}</b></div>
-    <div><span>Всего вернуть</span><b>${rub(q.total)}</b></div>
-  </div>`;

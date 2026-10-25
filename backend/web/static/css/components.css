@@ -210,7 +210,6 @@
 .header--platinum {
   background: transparent;
   border-bottom: 0;
-  margin-bottom: calc(-1 * var(--header-h));
 }
 .header--platinum .nav__link {
   color: var(--ink);
@@ -299,7 +298,7 @@
   height: 120px;
 }
 .header--platinum {
-  margin-bottom: -120px;
+  margin-bottom: -120px; /* шапка лежит поверх первого экрана; на узких экранах — на высоту шапки (ниже) */
 }
 .header--platinum .logo__sign {
   width: 54px; /* знак в макете — 39×60; у SVG поле 18×24 вокруг знака 13×20 */
@@ -461,11 +460,6 @@
 }
 .btn--link:hover {
   color: var(--ink);
-}
-.btn--lg {
-  height: 56px;
-  padding: 0 28px;
-  font-size: var(--fs-l);
 }
 .btn--sm {
   height: 40px;

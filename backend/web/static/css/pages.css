@@ -777,8 +777,9 @@
 .factor--minus .factor__pts {
   color: var(--bad);
 }
-.factor--total {
-  background: #fff !important;
+/* итоговая строка — белая вместо фона .factors li: два класса в селекторе сильнее класса с тегом */
+.factors .factor--total {
+  background: #fff;
   box-shadow: inset 0 0 0 1px var(--line);
 }
 .factor--total .factor__pts {
