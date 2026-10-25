@@ -6,11 +6,10 @@ import { $, $$, on } from '../core/dom.js';
 import { esc, fmt, rub, months, rate, digits } from '../core/format.js';
 import { navigate } from '../core/router.js';
 import { product, putApp } from '../core/session.js';
-import { toast } from '../ui/feedback.js';
 import { icon } from '../ui/icons.js';
 import { createAutosave } from '../features/autosave.js';
 import { levels } from './application-form.js';
-import { backLink, pageHead } from './parts.js';
+import { backLink, pageHead, paintProgress, showFieldError } from './parts.js';
 
 let RULES = null; // { required_from, kinds: [{type, name, discount}], premises: [{type, name}] }
 const rules = async () => (RULES ??= await api('GET', '/security-rules'));
@@ -156,11 +155,7 @@ export default async function applicationFull(root, a, { signal }) {
 
   const refresh = () => {
     const list = checklist(a, f);
-    const done = list.filter(([, ok]) => ok).length;
-    $('#sum-progress', root).style.width = `${Math.round((done / list.length) * 100)}%`;
-    $('#sum-pct', root).textContent = `Заполнено ${Math.round((done / list.length) * 100)}%`;
-    $('#sum-todo', root).innerHTML = list.map(([t, ok]) => `<li class="${ok ? 'is-done' : ''}">${t}</li>`).join('');
-    $('#submit', root).disabled = done < list.length;
+    $('#submit', root).disabled = paintProgress(root, list) < list.length;
     const sections = [list[0][1] && list[1][1] && list[2][1], list[3][1], list[4][1]];
     $$('.fsec', root).forEach((s, i) => s.classList.toggle('is-done', sections[i]));
     $('#ff-coll-info', root).innerHTML = collateralInfo(a, f.collateral);
@@ -296,13 +291,7 @@ export default async function applicationFull(root, a, { signal }) {
         putApp(await api('POST', `/applications/${id}/submit`));
         navigate(`/cabinet/applications/${id}`);
       } catch (e) {
-        toast(e.message, { error: true });
-        $$('.field--error', root).forEach((x) => x.classList.remove('field--error'));
-        const field = e.field && $(`[data-field="${e.field}"]`, root);
-        if (field) {
-          field.classList.add('field--error');
-          field.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+        showFieldError(root, e);
         btn.disabled = false;
         btn.textContent = 'Отправить на решение';
       }
