@@ -96,39 +96,17 @@ func main() {
 }
 
 func run(log *slog.Logger, addr string) error {
-	stepDelay, err := envDur("PIPELINE_STEP_DELAY", "3s")
-	if err != nil {
-		return err
-	}
-	sessionTTL, err := envDur("SESSION_TTL", "12h")
-	if err != nil {
-		return err
-	}
-	reqTimeout, err := envDur("REQUEST_TIMEOUT", "10s")
-	if err != nil {
-		return err
-	}
-	registryTTL, err := envDur("CACHE_REGISTRY_TTL", "1h")
-	if err != nil {
-		return err
-	}
-	bureauTTL, err := envDur("CACHE_BUREAU_TTL", "10m")
-	if err != nil {
-		return err
-	}
-	rateRPS, err := envFloat("RATE_LIMIT_RPS", 20)
-	if err != nil {
-		return err
-	}
-	rateBurst, err := envFloat("RATE_LIMIT_BURST", 60)
-	if err != nil {
-		return err
-	}
-	kafkaParts, err := envInt("KAFKA_PARTITIONS", 6, 32)
-	if err != nil {
-		return err
-	}
-	kafkaRepl, err := envInt("KAFKA_REPLICATION", 1, 16)
+	// все опечатки в настройках показываем разом, а не по одной за запуск
+	var cfgErrs []error
+	must := func(err error) { cfgErrs = append(cfgErrs, err) }
+	dur := func(k, def string) time.Duration { v, err := envDur(k, def); must(err); return v }
+	flt := func(k string, def float64) float64 { v, err := envFloat(k, def); must(err); return v }
+	num := func(k string, def int64, bits int) int64 { v, err := envInt(k, def, bits); must(err); return v }
+	stepDelay, sessionTTL, reqTimeout := dur("PIPELINE_STEP_DELAY", "3s"), dur("SESSION_TTL", "12h"), dur("REQUEST_TIMEOUT", "10s")
+	registryTTL, bureauTTL := dur("CACHE_REGISTRY_TTL", "1h"), dur("CACHE_BUREAU_TTL", "10m")
+	rateRPS, rateBurst := flt("RATE_LIMIT_RPS", 20), flt("RATE_LIMIT_BURST", 60)
+	kafkaParts, kafkaRepl := num("KAFKA_PARTITIONS", 6, 32), num("KAFKA_REPLICATION", 1, 16)
+	err := errors.Join(cfgErrs...)
 	if err != nil {
 		return err
 	}

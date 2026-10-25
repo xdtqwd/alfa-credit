@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"log/slog"
+	"strings"
+	"testing"
+)
 
 // Числовые настройки: пусто — значение по умолчанию, опечатка — ошибка запуска с именем переменной.
 func TestEnvNumbers(t *testing.T) {
@@ -30,5 +34,15 @@ func TestEnvNumbers(t *testing.T) {
 		if _, err := envInt("T_PARTS", 1, 16); err == nil {
 			t.Fatalf("envInt(%q, 16 bit) must fail", bad)
 		}
+	}
+}
+
+// Несколько опечаток в настройках — одна ошибка запуска, где названы все переменные.
+func TestRunReportsAllConfigErrors(t *testing.T) {
+	t.Setenv("SESSION_TTL", "12hours")
+	t.Setenv("RATE_LIMIT_RPS", "20x")
+	err := run(slog.New(slog.DiscardHandler), ":0")
+	if err == nil || !strings.Contains(err.Error(), "SESSION_TTL") || !strings.Contains(err.Error(), "RATE_LIMIT_RPS") {
+		t.Fatalf("want both variables in error, got %v", err)
 	}
 }

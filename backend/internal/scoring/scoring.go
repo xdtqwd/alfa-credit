@@ -6,6 +6,7 @@ package scoring
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -168,7 +169,7 @@ func counterOffer(a *domain.Application, p domain.Product, monthlyRevenue float6
 		if len(what) > 0 {
 			change = joinRu(what)
 		}
-		reasons := append(why,
+		reasons := append(slices.Clip(why),
 			fmt.Sprintf("Чтобы платёж уложился в 50%% выручки, мы %s. Новый платёж — %s в месяц.", change, domain.Money(offer.MonthlyPayment)),
 			fmt.Sprintf("Ставка выше базовой на %s п.п. (%s вместо %s) из-за повышенной нагрузки.", strings.Replace(fmt.Sprintf("%.1f", counterMarkup), ".", ",", 1), domain.Rate(rate), domain.Rate(p.Rate)),
 		)
@@ -178,7 +179,7 @@ func counterOffer(a *domain.Application, p domain.Product, monthlyRevenue float6
 	}
 	return domain.Decision{
 		Type: domain.DecisionRejected, Requested: &requested,
-		Reasons: append(why, fmt.Sprintf("Даже на максимальный срок %s платёж не укладывается в 50%% выручки с учётом текущих платежей.", domain.Months(p.MaxTerm))),
+		Reasons: append(slices.Clip(why), fmt.Sprintf("Даже на максимальный срок %s платёж не укладывается в 50%% выручки с учётом текущих платежей.", domain.Months(p.MaxTerm))),
 		Advice:  []string{"Погасите часть текущих кредитов и подайте заявку снова.", "Попробуйте овердрафт — он подходит для небольших сумм на короткий срок."},
 	}
 }
