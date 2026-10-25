@@ -21,7 +21,7 @@ import staffProfile from './pages/staff-profile.js';
 
 // ---------- маршруты ----------
 route('/', landing, { area: 'site', platinum: true }); // главная — платиновая тема для предпринимателей
-route('/apply', apply, { area: 'site' }); // 1-й уровень анкеты — без входа
+route('/apply', apply, { area: 'site', platinum: 'solid' }); // 1-й уровень анкеты — без входа, шапка того же металла, что на главной
 route('/cabinet', profile, { area: 'cabinet', tab: 'profile', auth: true });
 route('/cabinet/applications', applications, { area: 'cabinet', tab: 'applications', auth: true });
 route('/cabinet/applications/:id', application, { area: 'cabinet', tab: 'applications', auth: true });
@@ -82,7 +82,7 @@ async function render() {
   closeModal();
   // гостю и клиенту на странице кабинета банка — обычная шапка сайта, а не вкладки чужого кабинета
   const area = m.meta.staff && !isStaff() ? 'site' : m.meta.area;
-  renderHeader({ area, tab: m.meta.tab || '', platinum: !!m.meta.platinum });
+  renderHeader({ area, tab: m.meta.tab || '', platinum: m.meta.platinum || false });
   const root = freshRoot();
   const scroll = takeScroll();
   if (!scroll) window.scrollTo(0, 0);

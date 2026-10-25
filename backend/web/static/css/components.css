@@ -234,6 +234,13 @@
   backdrop-filter: blur(28px) saturate(1.1);
   box-shadow: none;
 }
+/* у металлической шапки 1-го уровня размытие внутри шапки не работает — меню сплошное, того же металла */
+.header--solid .services {
+  background: var(--platinum);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: 0 24px 32px rgba(31, 36, 38, 0.1);
+}
 .header--platinum .services__side {
   border-right-color: var(--platinum-line);
 }
@@ -297,6 +304,11 @@
 .header--platinum .header__right .btn--primary:hover {
   background: var(--lp-red-hover);
 }
+/* на 1-м уровне анкеты под шапкой нет платинового экрана: шапка сама из того же металла, обычной высоты */
+.header--platinum.header--solid {
+  --platinum-h: 72px;
+  margin-bottom: 0;
+}
 /* на главной шапка выше (120 px) и с крупным знаком — как в макете */
 .header--platinum .header__in {
   height: 120px;
@@ -305,6 +317,14 @@
   width: 54px; /* знак в макете — 39×60; у SVG поле 18×24 вокруг знака 13×20 */
   height: 72px;
   margin-left: -7px;
+}
+.header--solid .header__in {
+  height: var(--header-h);
+}
+.header--solid .logo__sign {
+  width: 26px;
+  height: 36px;
+  margin-left: 0;
 }
 
 @media (max-width: 1200px) {
@@ -322,6 +342,9 @@
   }
   .header--platinum {
     margin-bottom: calc(-1 * var(--header-h));
+  }
+  .header--platinum.header--solid {
+    margin-bottom: 0;
   }
   .header--platinum .logo__sign {
     width: 26px;

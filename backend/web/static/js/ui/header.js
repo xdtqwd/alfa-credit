@@ -165,7 +165,8 @@ export function renderHeader(next = {}) {
   const sig = JSON.stringify(m);
   if (sig === signature) return;
   signature = sig;
-  el.className = `header header--${m.area}${m.platinum ? ' header--platinum' : ''}`;
+  // platinum: true — шапка прозрачна поверх платинового первого экрана (главная), 'solid' — сама из платины (1-й уровень анкеты)
+  el.className = `header header--${m.area}${m.platinum ? ' header--platinum' : ''}${m.platinum === 'solid' ? ' header--solid platinum' : ''}`;
   el.innerHTML = `
     <div class="container header__in">
       <a class="logo" href="#/" aria-label="Альфа Бизнес — на главную">${logoSign()}</a>
