@@ -398,7 +398,7 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 
 // scale — шкала балльной модели: где отказ, где другие условия, где одобрение.
 func (s *Server) scale(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, 200, map[string]int{"base": scoring.BaseScore, "reject_below": scoring.RejectThreshold, "approve_from": scoring.ApproveThreshold, "max_dti_percent": 50})
+	writeJSON(w, 200, map[string]int{"base": scoring.BaseScore, "reject_below": scoring.RejectThreshold, "approve_from": scoring.ApproveThreshold, "max_dti_percent": int(scoring.MaxDTI * 100)})
 }
 
 func (s *Server) products(w http.ResponseWriter, _ *http.Request) {
@@ -419,11 +419,7 @@ func (s *Server) calc(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("%s|%d|%d", p.ID, in.Amount, in.TermMonths)
 	res, err := s.calcCache.GetOrLoad(r.Context(), key, func(context.Context) (domain.Quote, error) {
-		q, err := domain.Calculate(p, in.Amount, in.TermMonths)
-		if err != nil {
-			return domain.Quote{}, err
-		}
-		return q, nil
+		return domain.Calculate(p, in.Amount, in.TermMonths)
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -635,23 +631,8 @@ func (s *Server) platform(w http.ResponseWriter, r *http.Request) {
 		caches = append(caches, map[string]any{"name": c.Name, "hits": c.Hits, "misses": c.Misses, "size": c.Size, "hit_rate": rate})
 	}
 	out["caches"] = caches
-	out["events_published"] = sumCounter("events_published_total")
+	out["events_published"] = obs.Default.CounterTotal("events_published_total")
 	writeJSON(w, 200, out)
-}
-
-func sumCounter(name string) int64 {
-	var b strings.Builder
-	obs.Default.WriteText(&b)
-	var total int64
-	for _, line := range strings.Split(b.String(), "\n") {
-		if strings.HasPrefix(line, name+"{") || strings.HasPrefix(line, name+" ") {
-			if i := strings.LastIndexByte(line, ' '); i > 0 {
-				n, _ := strconv.ParseInt(line[i+1:], 10, 64)
-				total += n
-			}
-		}
-	}
-	return total
 }
 
 // ---------- helpers ----------

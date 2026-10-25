@@ -96,12 +96,10 @@ func (c *Cache[K, V]) getLocked(k K) (V, error, bool) {
 }
 
 // Set кладёт значение с TTL кэша (ttl == 0 — бессрочно до вытеснения).
-func (c *Cache[K, V]) Set(k K, v V) { c.SetTTL(k, v, c.ttl) }
-
-func (c *Cache[K, V]) SetTTL(k K, v V, ttl time.Duration) {
+func (c *Cache[K, V]) Set(k K, v V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.setLocked(k, v, nil, ttl)
+	c.setLocked(k, v, nil, c.ttl)
 }
 
 func (c *Cache[K, V]) setLocked(k K, v V, err error, ttl time.Duration) {

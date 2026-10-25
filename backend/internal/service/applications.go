@@ -322,7 +322,9 @@ func (s *Service) Pay(ctx context.Context, clientID, id string) (*domain.Applica
 	})
 	if err != nil && debited > 0 && !s.transactional() {
 		// файловый режим: деньги списаны, но заявка не сохранилась — возвращаем на счёт
-		_, _ = s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { u.Credit(debited); return nil })
+		if _, cerr := s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { u.Credit(debited); return nil }); cerr != nil {
+			obs.L(ctx).Error("pay compensation failed: debited amount not returned", "app", id, "amount", debited, "err", cerr)
+		}
 	}
 	s.audit(ctx, "loan.pay", id, err, map[string]any{"amount": debited})
 	if err != nil {
@@ -341,11 +343,6 @@ func (s *Service) Cancel(ctx context.Context, clientID, id string) (*domain.Appl
 	})
 	s.audit(ctx, "application.cancel", id, err, nil)
 	return out, err
-}
-
-// BankList — все заявки для сотрудника банка.
-func (s *Service) BankList(ctx context.Context) ([]*domain.Application, error) {
-	return s.Repo.List(ctx, storage.Filter{})
 }
 
 // BankPage — заявки для кабинета банка с поиском, фильтром и пагинацией.

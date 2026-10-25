@@ -72,6 +72,50 @@ func TestLoginAndRegister(t *testing.T) {
 	}
 }
 
+// flakyUsers — хранилище пользователей, у которого можно «уронить» поиск или изменение.
+type flakyUsers struct {
+	storage.UserRepository
+	findErr, updateErr error
+}
+
+func (f flakyUsers) FindByPhone(ctx context.Context, phone string) (*domain.User, error) {
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	return f.UserRepository.FindByPhone(ctx, phone)
+}
+
+func (f flakyUsers) UpdateUser(ctx context.Context, id string, fn func(u *domain.User) error) (*domain.User, error) {
+	if f.updateErr != nil {
+		return nil, f.updateErr
+	}
+	return f.UserRepository.UpdateUser(ctx, id, fn)
+}
+
+func TestLoginReportsStorageErrors(t *testing.T) {
+	e := newEnv(t)
+	errDB := errors.New("db down")
+	// сбой поиска — это не «неверный пароль» и не попытка подбора: блокировки входа быть не должно
+	e.auth.Users = flakyUsers{UserRepository: e.users, findErr: errDB}
+	for range 5 {
+		if _, _, err := e.auth.Login(ctx, "79000000001", DemoPassword, "3.3.3.3"); !errors.Is(err, errDB) {
+			t.Fatalf("find failure: got %v, want %v", err, errDB)
+		}
+	}
+	// сбой записи времени входа — ошибка, а не паника на пустом пользователе
+	e.auth.Users = flakyUsers{UserRepository: e.users, updateErr: errDB}
+	if _, _, err := e.auth.Login(ctx, "79000000001", DemoPassword, "3.3.3.3"); !errors.Is(err, errDB) {
+		t.Fatalf("update failure: got %v, want %v", err, errDB)
+	}
+	e.auth.Users = e.users
+	if _, _, err := e.auth.Login(ctx, "79000000001", DemoPassword, "3.3.3.3"); err != nil {
+		t.Fatalf("login after storage recovery: %v", err)
+	}
+	if _, _, err := e.auth.Login(ctx, "79000000099", DemoPassword, "4.4.4.4"); !errors.Is(err, domain.ErrInvalidCredentials) {
+		t.Fatalf("unknown phone: got %v, want invalid credentials", err)
+	}
+}
+
 func TestCreatePrefillsAndClamps(t *testing.T) {
 	e := newEnv(t)
 	u := e.user(t, "79000000001")

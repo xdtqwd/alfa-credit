@@ -38,32 +38,9 @@ func (s *Store) writeOutbox(ctx context.Context, evs []events.Event) error {
 func (s *Store) RelayOutbox(ctx context.Context, pub events.Publisher, batch int) (int, error) {
 	n := 0
 	err := s.InTx(ctx, func(ctx context.Context) error {
-		rows, err := s.q(ctx).QueryContext(ctx, `SELECT id, envelope FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, batch)
-		if err != nil {
+		ids, evs, err := s.outboxBatch(ctx, batch)
+		if err != nil || len(evs) == 0 {
 			return err
-		}
-		var ids []int64
-		var evs []events.Event
-		for rows.Next() {
-			var id int64
-			var env []byte
-			if err := rows.Scan(&id, &env); err != nil {
-				rows.Close()
-				return err
-			}
-			var e events.Event
-			if err := json.Unmarshal(env, &e); err != nil {
-				rows.Close()
-				return err
-			}
-			if e.Topic == "" {
-				e.Topic = events.TopicApplications
-			}
-			ids, evs = append(ids, id), append(evs, e)
-		}
-		rows.Close()
-		if len(evs) == 0 {
-			return nil
 		}
 		if err := pub.Publish(ctx, evs...); err != nil {
 			return err
@@ -77,10 +54,42 @@ func (s *Store) RelayOutbox(ctx context.Context, pub events.Publisher, batch int
 		return nil
 	})
 	if err != nil {
-		_, _ = s.DB.ExecContext(context.Background(), `UPDATE outbox SET attempts=attempts+1, last_error=$1
+		// отметка попытки пишется и при остановке сервиса (ctx отменён), но не дольше 3 с —
+		// недоступная БД не должна подвешивать цикл доставки
+		c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		_, _ = s.DB.ExecContext(c, `UPDATE outbox SET attempts=attempts+1, last_error=$1
 			WHERE id IN (SELECT id FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT $2)`, truncate(err.Error(), 500), batch)
 	}
 	return n, err
+}
+
+// outboxBatch читает пачку неотправленных событий под блокировкой строк. Курсор закрывается до
+// возврата: дальше в той же транзакции идут UPDATE, а драйвер не выполняет их при открытом курсоре.
+func (s *Store) outboxBatch(ctx context.Context, batch int) ([]int64, []events.Event, error) {
+	rows, err := s.q(ctx).QueryContext(ctx, `SELECT id, envelope FROM outbox WHERE published_at IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED`, batch)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	var evs []events.Event
+	for rows.Next() {
+		var id int64
+		var env []byte
+		if err := rows.Scan(&id, &env); err != nil {
+			return nil, nil, err
+		}
+		var e events.Event
+		if err := json.Unmarshal(env, &e); err != nil {
+			return nil, nil, err
+		}
+		if e.Topic == "" {
+			e.Topic = events.TopicApplications
+		}
+		ids, evs = append(ids, id), append(evs, e)
+	}
+	return ids, evs, rows.Err()
 }
 
 // OutboxPending — сколько событий ждут отправки (метрика: растёт, если Kafka недоступна).

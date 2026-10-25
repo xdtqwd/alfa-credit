@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -93,6 +94,42 @@ func TestPipelineScenarios(t *testing.T) {
 				t.Fatalf("history: %+v", a.History)
 			}
 		})
+	}
+}
+
+// flakyRegistry отвечает ошибкой, пока реестр «лежит».
+type flakyRegistry struct {
+	integrations.MockRegistry
+	down *bool
+}
+
+func (r flakyRegistry) Lookup(ctx context.Context, inn string) (*domain.Company, error) {
+	if *r.down {
+		return nil, errors.New("registry timeout")
+	}
+	return r.MockRegistry.Lookup(ctx, inn)
+}
+
+// Регрессия: недоступный реестр отклонял заявку как «компания не найдена». Теперь шаг повторяется.
+func TestRegistryOutageIsRetriedNotRejected(t *testing.T) {
+	repo, _ := storage.NewFileStore("")
+	w := worker(repo)
+	down := true
+	w.Registry = flakyRegistry{down: &down}
+	a := submitted(t, repo, "7701234567", 3_000_000, 80_000_000, 0)
+	if err := w.Step(ctx, a); err != nil { // submitted → data_check
+		t.Fatal(err)
+	}
+	a, _ = repo.Get(ctx, a.ID)
+	if err := w.Step(ctx, a); err == nil {
+		t.Fatal("registry outage must be returned for retry")
+	}
+	if a, _ = repo.Get(ctx, a.ID); a.Status != domain.StatusDataCheck {
+		t.Fatalf("status = %s, want %s: outage is not a rejection", a.Status, domain.StatusDataCheck)
+	}
+	down = false
+	if a = run(t, w, a.ID); a.Status != domain.StatusApproved {
+		t.Fatalf("after registry recovery: status = %s, want %s", a.Status, domain.StatusApproved)
 	}
 }
 

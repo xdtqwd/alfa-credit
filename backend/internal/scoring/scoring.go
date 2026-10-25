@@ -6,6 +6,7 @@ package scoring
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	ApproveThreshold = approveThreshold
 	RejectThreshold  = rejectThreshold
 	BaseScore        = baseScore
+	MaxDTI           = maxDTI
 )
 
 type Result struct {
@@ -98,7 +100,7 @@ func Evaluate(a *domain.Application, p domain.Product, br *domain.BureauReport, 
 	switch {
 	case dti <= 0.3:
 		add("Низкая долговая нагрузка", 80, load+" Это комфортная нагрузка.")
-	case dti <= 0.5:
+	case dti <= maxDTI:
 		add("Умеренная долговая нагрузка", 30, load+" Это в пределах нормы — до 50%.")
 	case dti <= 0.7:
 		add("Высокая долговая нагрузка", -40, load+" Это больше допустимых 50%: платить будет тяжело.")
@@ -167,7 +169,7 @@ func counterOffer(a *domain.Application, p domain.Product, monthlyRevenue float6
 		if len(what) > 0 {
 			change = joinRu(what)
 		}
-		reasons := append(why,
+		reasons := append(slices.Clip(why),
 			fmt.Sprintf("Чтобы платёж уложился в 50%% выручки, мы %s. Новый платёж — %s в месяц.", change, domain.Money(offer.MonthlyPayment)),
 			fmt.Sprintf("Ставка выше базовой на %s п.п. (%s вместо %s) из-за повышенной нагрузки.", strings.Replace(fmt.Sprintf("%.1f", counterMarkup), ".", ",", 1), domain.Rate(rate), domain.Rate(p.Rate)),
 		)
@@ -177,7 +179,7 @@ func counterOffer(a *domain.Application, p domain.Product, monthlyRevenue float6
 	}
 	return domain.Decision{
 		Type: domain.DecisionRejected, Requested: &requested,
-		Reasons: append(why, fmt.Sprintf("Даже на максимальный срок %s платёж не укладывается в 50%% выручки с учётом текущих платежей.", domain.Months(p.MaxTerm))),
+		Reasons: append(slices.Clip(why), fmt.Sprintf("Даже на максимальный срок %s платёж не укладывается в 50%% выручки с учётом текущих платежей.", domain.Months(p.MaxTerm))),
 		Advice:  []string{"Погасите часть текущих кредитов и подайте заявку снова.", "Попробуйте овердрафт — он подходит для небольших сумм на короткий срок."},
 	}
 }
