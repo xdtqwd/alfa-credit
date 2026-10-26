@@ -63,5 +63,5 @@ export default async function credits(root, { signal }) {
     },
     signal,
   );
-  on(root, 'click', '[data-new-loan]', () => startApplication('business-dev'), signal);
+  on(root, 'click', '[data-new-loan]', () => startApplication(), signal);
 }

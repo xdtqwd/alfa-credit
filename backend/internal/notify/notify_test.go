@@ -45,22 +45,24 @@ func TestNotifiesOnDecisionOnceDespiteRedelivery(t *testing.T) {
 	}
 }
 
-func TestPreliminaryDecisionAsksForFullFormNotSigning(t *testing.T) {
+// Решения конвейера теперь всегда окончательные (полный скоринг): одобрение зовёт к подписанию,
+// уточнение — к документам 2-го уровня.
+func TestFinalDecisionTexts(t *testing.T) {
 	var logs bytes.Buffer
 	s := &Service{Log: slog.New(slog.NewJSONHandler(&logs, nil))}
-	send := func(final bool) string {
+	send := func(to domain.Status) string {
 		logs.Reset()
-		after := &domain.Application{ID: "a", Status: domain.StatusApproved, Decision: &domain.Decision{Type: domain.DecisionApproved, Final: final}}
+		after := &domain.Application{ID: "a", Status: to, Decision: &domain.Decision{Type: domain.DecisionType(to), Final: true}}
 		e := events.FromChange(&domain.Application{ID: "a", Status: domain.StatusScoring}, after, "")[0]
 		if err := s.Handle(context.Background(), e); err != nil {
 			t.Fatal(err)
 		}
 		return logs.String()
 	}
-	if l := send(false); !strings.Contains(l, "заполните полную анкету") || strings.Contains(l, "подпишите") {
-		t.Fatalf("предварительное решение: %s", l)
+	if l := send(domain.StatusApproved); !strings.Contains(l, "подпишите договор") {
+		t.Fatalf("одобрение: %s", l)
 	}
-	if l := send(true); !strings.Contains(l, "подпишите договор") {
-		t.Fatalf("окончательное решение: %s", l)
+	if l := send(domain.StatusNeedInfo); !strings.Contains(l, "документы или обеспечение") {
+		t.Fatalf("уточнение: %s", l)
 	}
 }

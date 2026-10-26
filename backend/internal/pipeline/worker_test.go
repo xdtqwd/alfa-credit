@@ -11,12 +11,33 @@ import (
 
 	"github.com/xdtqwd/alfa-credit/internal/domain"
 	"github.com/xdtqwd/alfa-credit/internal/integrations"
+	"github.com/xdtqwd/alfa-credit/internal/scoring"
 	"github.com/xdtqwd/alfa-credit/internal/storage"
 )
 
 var ctx = context.Background()
 
+var testIdentity = &domain.Identity{FullName: "Смирнов Алексей Викторович",
+	Passport: domain.Passport{Series: "4512", Number: "345678", IssuedAt: "2016-05-24", IssuedBy: "ГУ МВД России по г. Москве", DivisionCode: "770-045"}}
+
+// level2Form — минимально заполненный 2-й уровень: паспорт руководителя (для ООО) и согласие.
+func level2Form(c *domain.Company) domain.FullForm {
+	f := domain.FullForm{Collateral: domain.Collateral{Type: domain.CollateralNone}, Consent: true}
+	if c.Type != "ИП" {
+		p := testIdentity.Passport
+		f.DirectorPassport = &p
+	}
+	return f
+}
+
 func submitted(t *testing.T, repo storage.Repository, inn string, amount, revenue, obligations int64) *domain.Application {
+	t.Helper()
+	return submittedWith(t, repo, inn, amount, revenue, obligations, nil)
+}
+
+// submittedWith — заявка, отправленная на полный скоринг: с предварительным расчётом 1-го уровня
+// (тот же скоринг без кредитной истории) и личностью из Госуслуг. full == nil — минимальный 2-й уровень.
+func submittedWith(t *testing.T, repo storage.Repository, inn string, amount, revenue, obligations int64, full *domain.FullForm) *domain.Application {
 	t.Helper()
 	reg := integrations.MockRegistry{}
 	c, err := reg.Lookup(ctx, inn)
@@ -26,8 +47,17 @@ func submitted(t *testing.T, repo storage.Repository, inn string, amount, revenu
 	a := &domain.Application{
 		ID: "app-" + inn, ClientID: "c", ProductID: "business-dev", Amount: amount, TermMonths: 24, INN: inn, Company: c,
 		Financials: domain.Financials{AnnualRevenue: revenue, MonthlyObligations: obligations},
-		Status:     domain.StatusSubmitted, StatusChangedAt: time.Now().Add(-time.Hour),
+		Level:      2, Identity: testIdentity,
+		Status: domain.StatusSubmitted, StatusChangedAt: time.Now().Add(-time.Hour),
 	}
+	f := level2Form(c)
+	if full != nil {
+		f = *full
+	}
+	a.Full = &f
+	p, _ := domain.FindProduct(a.ProductID)
+	pre := scoring.Prescore(a, p, time.Now()).Decision
+	a.Preliminary = &pre
 	a, err = repo.Create(ctx, a)
 	if err != nil {
 		t.Fatal(err)
@@ -56,24 +86,34 @@ func worker(repo storage.Repository) *Worker {
 }
 
 func TestPipelineScenarios(t *testing.T) {
+	llc := func(edit func(f *domain.FullForm)) *domain.FullForm {
+		f := level2Form(&domain.Company{Type: "ООО"})
+		edit(&f)
+		return &f
+	}
 	cases := []struct {
 		name                 string
 		inn                  string
 		amount, revenue, obl int64
+		full                 *domain.FullForm
 		want                 domain.Status
 		reasonMustMention    string
 	}{
-		{"healthy → approved", "7701234567", 3_000_000, 80_000_000, 0, domain.StatusApproved, ""},
-		{"too big → counter offer", "2224000012", 20_000_000, 18_000_000, 200_000, domain.StatusCounterOffer, "50%"},
-		{"revenue ≫ ФНС → need info", "2224000012", 3_000_000, 50_000_000, 0, domain.StatusNeedInfo, "18 000 000 ₽"},
-		{"overdue → rejected", "5401000009", 3_000_000, 30_000_000, 300_000, domain.StatusRejected, "просрочки"},
-		{"liquidated → rejected at data check", "6600000000", 1_000_000, 10_000_000, 0, domain.StatusRejected, "ликвидирована"},
+		{"healthy → approved", "7701234567", 3_000_000, 80_000_000, 0, nil, domain.StatusApproved, ""},
+		{"too big → counter offer", "2224000012", 20_000_000, 18_000_000, 200_000,
+			llc(func(f *domain.FullForm) {
+				f.Guarantor = &domain.Guarantor{FullName: "Кузнецов Олег", INN: "222400000123"}
+			}), domain.StatusCounterOffer, "50%"},
+		{"overdue in БКИ → rejected on full scoring", "5401000009", 3_000_000, 30_000_000, 300_000, nil, domain.StatusRejected, "просрочки"},
+		{"liquidated → rejected at data check", "6600000000", 1_000_000, 10_000_000, 0, nil, domain.StatusRejected, "ликвидирована"},
+		{"invalid director passport → need info", "7701234567", 3_000_000, 80_000_000, 0,
+			llc(func(f *domain.FullForm) { f.DirectorPassport.Number = "000000" }), domain.StatusNeedInfo, "недействителен"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			repo, _ := storage.NewFileStore("")
 			w := worker(repo)
-			a := run(t, w, submitted(t, repo, c.inn, c.amount, c.revenue, c.obl).ID)
+			a := run(t, w, submittedWith(t, repo, c.inn, c.amount, c.revenue, c.obl, c.full).ID)
 			if a.Status != c.want {
 				t.Fatalf("status = %s, want %s; decision %+v", a.Status, c.want, a.Decision)
 			}
@@ -83,8 +123,8 @@ func TestPipelineScenarios(t *testing.T) {
 			if c.reasonMustMention != "" && !strings.Contains(strings.ToLower(strings.Join(a.Decision.Reasons, " ")), strings.ToLower(c.reasonMustMention)) {
 				t.Fatalf("reasons must mention %q: %q", c.reasonMustMention, a.Decision.Reasons)
 			}
-			if len(a.Checks) == 0 {
-				t.Fatal("checks must be recorded")
+			if len(a.Checks) == 0 || !a.Decision.Final {
+				t.Fatal("checks must be recorded and the decision be final")
 			}
 			if c.want == domain.StatusCounterOffer && (a.Decision.Requested == nil || a.Decision.Amount >= c.amount && a.Decision.TermMonths == 24) {
 				t.Fatalf("counter offer must change terms and keep requested quote: %+v", a.Decision)

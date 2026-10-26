@@ -8,48 +8,26 @@ import (
 	"github.com/xdtqwd/alfa-credit/internal/storage"
 )
 
-// preliminary проводит быструю анкету через конвейер и открывает полную (как Service.Accept).
-func preliminary(t *testing.T, repo storage.Repository, w *Worker, amount int64, full domain.FullForm) *domain.Application {
-	t.Helper()
-	a := run(t, w, submitted(t, repo, "7701234567", amount, 80_000_000, 0).ID)
-	if a.Status != domain.StatusApproved || a.Decision.Final {
-		t.Fatalf("level 1 must give a preliminary approval: %s final=%v", a.Status, a.Decision.Final)
-	}
-	a, err := repo.Update(ctx, a.ID, func(x *domain.Application) error {
-		if err := x.Transition(domain.StatusFullForm, "client", "", w.Now()); err != nil {
-			return err
-		}
-		x.StartFullForm("")
-		x.Full = &full
-		if err := x.ValidateFull(); err != nil {
-			return err
-		}
-		return x.Transition(domain.StatusVerification, "client", "", w.Now())
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return run(t, w, a.ID)
+func fullForm(c domain.Collateral, g *domain.Guarantor) *domain.FullForm {
+	f := level2Form(&domain.Company{Type: "ООО"})
+	f.Collateral, f.Guarantor = c, g
+	return &f
 }
 
-func fullForm(c domain.Collateral, g *domain.Guarantor) domain.FullForm {
-	return domain.FullForm{Employees: 25, Premises: "own", PurposeDetails: "Открытие второго цеха и найм сотрудников",
-		Collateral: c, Guarantor: g, StatementsConsent: true}
-}
-
-func TestFullFormFinalDecision(t *testing.T) {
+// Полный скоринг: кредитная история и обеспечение меняют предварительные условия.
+func TestFullScoringFinalDecision(t *testing.T) {
 	none := domain.Collateral{Type: domain.CollateralNone}
 	cases := []struct {
 		name     string
 		amount   int64
-		form     domain.FullForm
+		form     *domain.FullForm
 		want     domain.Status
 		rateDiff float64 // окончательная ставка минус предварительная
 		mention  string
 	}{
-		{"small loan without security → final approval on the same terms", 3_000_000, fullForm(none, nil), domain.StatusApproved, 0, "подтверждаем"},
-		{"full collateral → rate −1 p.p.", 8_000_000, fullForm(domain.Collateral{Type: domain.CollateralRealty, Value: 15_000_000}, nil), domain.StatusApproved, -1, "ниже на 1 п.п."},
-		{"clean guarantor covers a big loan", 8_000_000, fullForm(none, &domain.Guarantor{FullName: "Смирнов Алексей", INN: "770123456781"}), domain.StatusApproved, 0, "Поручительство"},
+		{"good credit history lowers the rate", 3_000_000, fullForm(none, nil), domain.StatusApproved, -1, "высокую оценку"},
+		{"full collateral → another −1 p.p.", 8_000_000, fullForm(domain.Collateral{Type: domain.CollateralRealty, Value: 15_000_000}, nil), domain.StatusApproved, -2, "Залог полностью покрывает"},
+		{"clean guarantor covers a big loan", 8_000_000, fullForm(none, &domain.Guarantor{FullName: "Смирнов Алексей", INN: "770123456781"}), domain.StatusApproved, -1, "Поручительство"},
 		{"guarantor with overdue and no collateral → need info", 8_000_000, fullForm(none, &domain.Guarantor{FullName: "Петров Игорь", INN: "540100000009"}), domain.StatusNeedInfo, 0, "просрочки"},
 		{"weak collateral → need info", 8_000_000, fullForm(domain.Collateral{Type: domain.CollateralEquipment, Value: 2_000_000}, nil), domain.StatusNeedInfo, 0, "не хватает"},
 	}
@@ -57,7 +35,7 @@ func TestFullFormFinalDecision(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			repo, _ := storage.NewFileStore("")
 			w := worker(repo)
-			a := preliminary(t, repo, w, c.amount, c.form)
+			a := run(t, w, submittedWith(t, repo, "7701234567", c.amount, 80_000_000, 0, c.form).ID)
 			if a.Status != c.want {
 				t.Fatalf("status = %s, want %s; %+v", a.Status, c.want, a.Decision)
 			}
@@ -76,20 +54,24 @@ func TestFullFormFinalDecision(t *testing.T) {
 			for _, ch := range a.Checks {
 				codes[ch.Code] = true
 			}
-			if !codes["registry"] || !codes["full_form"] || !codes["collateral"] {
-				t.Fatalf("level-1 checks must stay and level-2 checks be added: %+v", a.Checks)
+			if !codes["registry"] || !codes["bki"] || !codes["esia"] || !codes["passport"] || !codes["scoring"] {
+				t.Fatalf("level-2 checks must be recorded: %+v", a.Checks)
 			}
 		})
 	}
 }
 
-func TestOverdraftIsSingleLevel(t *testing.T) {
+// Протокол об одобрении крупной сделки попадает в проверки банка.
+func TestProtocolIsChecked(t *testing.T) {
 	repo, _ := storage.NewFileStore("")
 	w := worker(repo)
-	a := submitted(t, repo, "7701234567", 500_000, 80_000_000, 0)
-	repo.Update(ctx, a.ID, func(x *domain.Application) error { x.ProductID, x.TermMonths = "overdraft", 12; return nil })
-	a = run(t, w, a.ID)
-	if a.Status != domain.StatusApproved || !a.Decision.Final {
-		t.Fatalf("overdraft decision must be final at once: %s final=%v", a.Status, a.Decision.Final)
+	f := fullForm(domain.Collateral{Type: domain.CollateralRealty, Value: 60_000_000}, nil)
+	f.Protocol = &domain.Document{Name: "Протокол ОСУ №3.pdf", Size: 120_000}
+	a := run(t, w, submittedWith(t, repo, "7701234567", 26_000_000, 84_000_000, 0, f).ID)
+	for _, c := range a.Checks {
+		if c.Code == "protocol" && c.Result == "ok" && strings.Contains(c.Details, "Протокол ОСУ") {
+			return
+		}
 	}
+	t.Fatalf("protocol check missing: %s %+v", a.Status, a.Checks)
 }

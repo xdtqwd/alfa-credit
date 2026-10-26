@@ -1,7 +1,8 @@
-// Package pipeline — кредитный конвейер (банковская сторона).
+// Package pipeline — кредитный конвейер (банковская сторона) для 2-го уровня анкеты.
 //
-//	Уровень 1: submitted → data_check → scoring → предварительное решение (по быстрой анкете).
-//	Уровень 2: verification → окончательное решение (по полной анкете: обеспечение, поручитель).
+//	Предварительный расчёт 1-го уровня считается синхронно без заявки (service.Prescore).
+//	Здесь — полный скоринг: submitted → data_check (реестр, БКИ, Госуслуги, паспорт, протокол,
+//	поручитель) → scoring (балл с кредитной историей и правила обеспечения) → окончательное решение.
 //
 // Основной путь — событийный: конвейер состоит в consumer group топика заявок (Kafka) и на каждое
 // событие «статус изменился» делает следующий шаг. Шаг сам меняет статус → новое событие → следующий шаг.
@@ -50,7 +51,7 @@ type Worker struct {
 	Now        func() time.Time
 }
 
-var pipelineStatuses = []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring, domain.StatusVerification}
+var pipelineStatuses = []domain.Status{domain.StatusSubmitted, domain.StatusDataCheck, domain.StatusScoring}
 
 // Handle — обработчик события из шины (consumer group Consumer).
 func (w *Worker) Handle(ctx context.Context, e events.Event) error {
@@ -149,8 +150,6 @@ func (w *Worker) process(ctx context.Context, a *domain.Application) error {
 		return w.dataCheck(ctx, a)
 	case domain.StatusScoring:
 		return w.score(ctx, a)
-	case domain.StatusVerification:
-		return w.verify(ctx, a)
 	}
 	return nil
 }
@@ -170,6 +169,8 @@ func (w *Worker) update(ctx context.Context, a *domain.Application, fn func(*dom
 	return err
 }
 
+// dataCheck — проверки 2-го уровня. Окончательные отказы — только по реестру; сбой внешнего
+// сервиса — ретрай на следующем тике, а не отказ.
 func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	company, regErr := w.Registry.Lookup(ctx, a.INN)
 	var invalidINN *domain.ValidationError
@@ -180,43 +181,73 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	if bkiErr != nil {
 		return bkiErr // ретрай на следующем тике
 	}
+	f := a.Full
+	if f == nil {
+		f = &domain.FullForm{}
+	}
+	var guarantor *domain.BureauReport
+	if f.Guarantor != nil {
+		r, err := w.Bureau.Report(ctx, f.Guarantor.INN)
+		if err != nil {
+			return err
+		}
+		guarantor = r
+	}
 
 	var checks []domain.Check
-	next, comment := domain.StatusScoring, "Данные подтверждены, оцениваем риск"
+	next, comment := domain.StatusScoring, "Данные подтверждены, считаем полный скоринг"
 	var decision *domain.Decision
 
 	switch {
 	case regErr != nil:
 		checks = append(checks, chk("registry", "ЕГРЮЛ/ЕГРИП", "fail", "Компания не найдена"))
 		next, comment = domain.StatusRejected, "Компания не найдена в реестре"
-		decision = &domain.Decision{Type: domain.DecisionRejected, Reasons: []string{"Мы не нашли компанию с ИНН " + a.INN + " в государственном реестре (ЕГРЮЛ/ЕГРИП)."}, Advice: []string{"Проверьте ИНН в профиле компании."}}
+		decision = &domain.Decision{Type: domain.DecisionRejected, Final: true, Reasons: []string{"Мы не нашли компанию с ИНН " + a.INN + " в государственном реестре (ЕГРЮЛ/ЕГРИП)."}, Advice: []string{"Проверьте ИНН и оформите заявку снова."}}
 	case company.Status != "active":
 		checks = append(checks, chk("registry", "ЕГРЮЛ/ЕГРИП", "fail", "Компания ликвидирована"))
 		next, comment = domain.StatusRejected, "Компания не действует по данным реестра"
-		decision = &domain.Decision{Type: domain.DecisionRejected, Reasons: []string{"По данным государственного реестра (ЕГРЮЛ) компания " + company.Name + " ликвидирована. Кредит можно выдать только действующей компании."}, Advice: []string{"Если компания действует, а в реестре ошибка — обратитесь в налоговую и подайте заявку после исправления."}}
+		decision = &domain.Decision{Type: domain.DecisionRejected, Final: true, Reasons: []string{"По данным государственного реестра (ЕГРЮЛ) компания " + company.Name + " ликвидирована. Кредит можно выдать только действующей компании."}, Advice: []string{"Если компания действует, а в реестре ошибка — обратитесь в налоговую и подайте заявку после исправления."}}
 	default:
 		checks = append(checks, chk("registry", "ЕГРЮЛ/ЕГРИП", "ok", "Компания действует, регистрация с "+company.RegDate))
 	}
 
+	if a.Identity != nil {
+		checks = append(checks, chk("esia", "Личность (Госуслуги)", "ok", a.Identity.FullName+", паспорт "+a.Identity.Passport.Masked()))
+	}
 	if report.HasOverdue {
 		checks = append(checks, chk("bki", "Кредитная история (БКИ)", "warn", fmt.Sprintf("Есть просрочки до %d дней, кредитов: %d", report.MaxOverdueDays, report.ActiveLoans)))
 	} else {
 		checks = append(checks, chk("bki", "Кредитная история (БКИ)", "ok", fmt.Sprintf("Просрочек нет, действующих кредитов: %d", report.ActiveLoans)))
 	}
-
-	if next == domain.StatusScoring && company.RevenueLastYear > 0 &&
-		float64(a.Financials.AnnualRevenue) > 1.5*float64(company.RevenueLastYear) {
+	if company != nil && company.RevenueLastYear > 0 && float64(a.Financials.AnnualRevenue) > 1.5*float64(company.RevenueLastYear) {
 		checks = append(checks, chk("revenue", "Сверка выручки с ФНС", "warn",
 			fmt.Sprintf("Указано %s, по данным ФНС — %s", domain.Money(a.Financials.AnnualRevenue), domain.Money(company.RevenueLastYear))))
-		next = domain.StatusNeedInfo
-		comment = "Уточните выручку: она заметно выше данных ФНС"
-		decision = &domain.Decision{Type: domain.DecisionNeedInfo,
-			Reasons: []string{fmt.Sprintf("В анкете выручка за год — %s, а по данным налоговой за прошлый год — %s. Разница больше чем в полтора раза, поэтому мы не можем оценить заявку автоматически.",
-				domain.Money(a.Financials.AnnualRevenue), domain.Money(company.RevenueLastYear))},
-			Advice: []string{"Проверьте, не опечатались ли вы в выручке (лишний ноль — частая причина).", "Если выручка действительно выросла, укажите реальную цифру и отправьте анкету снова — мы пересчитаем."},
-		}
-	} else if next == domain.StatusScoring {
+	} else {
 		checks = append(checks, chk("revenue", "Сверка выручки с ФНС", "ok", "Расхождений нет"))
+	}
+	if a.IsLLC() && f.DirectorPassport != nil {
+		// мок МВД: паспорт с номером 000000 — недействительный (для демонстрации уточнения)
+		if f.DirectorPassport.Number == "000000" {
+			checks = append(checks, chk("passport", "Паспорт руководителя (МВД)", "fail", "Паспорт "+f.DirectorPassport.Masked()+" недействителен"))
+			if next == domain.StatusScoring {
+				next, comment = domain.StatusNeedInfo, "Уточните паспорт руководителя"
+				decision = &domain.Decision{Type: domain.DecisionNeedInfo, Final: true,
+					Reasons: []string{"Паспорт руководителя " + f.DirectorPassport.Masked() + " по данным МВД недействителен."},
+					Advice:  []string{"Проверьте серию и номер паспорта руководителя и отправьте снова."}}
+			}
+		} else {
+			checks = append(checks, chk("passport", "Паспорт руководителя (МВД)", "ok", "Паспорт "+f.DirectorPassport.Masked()+" действителен"))
+		}
+	}
+	if a.NeedsProtocol() && f.Protocol != nil {
+		checks = append(checks, chk("protocol", "Решение об одобрении крупной сделки", "ok", f.Protocol.Name))
+	}
+	if g := f.Guarantor; g != nil {
+		if guarantor.HasOverdue {
+			checks = append(checks, chk("guarantor", "Поручитель (БКИ)", "fail", fmt.Sprintf("%s: просрочки до %d дней", g.FullName, guarantor.MaxOverdueDays)))
+		} else {
+			checks = append(checks, chk("guarantor", "Поручитель (БКИ)", "ok", g.FullName+": просрочек нет"))
+		}
 	}
 
 	return w.update(ctx, a, func(x *domain.Application) error {
@@ -230,123 +261,95 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	})
 }
 
+// score — полный скоринг: балл с кредитной историей и правила обеспечения.
+//
+//   - Сумма больше domain.SecurityRequiredFrom: обеспечение должно покрывать хотя бы половину кредита
+//     залогом (в зачёт — оценка с дисконтом) или быть поручительство без просрочек в БКИ.
+//   - Залог покрывает всю сумму — ставка на 1 п.п. ниже.
 func (w *Worker) score(ctx context.Context, a *domain.Application) error {
 	p, ok := domain.FindProduct(a.ProductID)
 	if !ok {
 		return fmt.Errorf("unknown product %q", a.ProductID)
 	}
 	res := scoring.Evaluate(a, p, a.Bureau, w.Now())
+	d := res.Decision
+	d.Final = true
+	f := a.Full
+	if f == nil {
+		f = &domain.FullForm{Collateral: domain.Collateral{Type: domain.CollateralNone}}
+	}
+	var checks []domain.Check
+	if d.Type == domain.DecisionApproved || d.Type == domain.DecisionCounter {
+		amount := d.Amount
+		need := amount > domain.SecurityRequiredFrom
+		liquid := f.Collateral.LiquidValue()
+		switch {
+		case f.Collateral.Type == domain.CollateralNone && need:
+			checks = append(checks, chk("collateral", "Залог", "warn", "Без залога"))
+		case f.Collateral.Type == domain.CollateralNone:
+			checks = append(checks, chk("collateral", "Залог", "ok", fmt.Sprintf("Не нужен для суммы до %s", domain.GroupDigits(domain.SecurityRequiredFrom))))
+		case need && liquid*2 < amount:
+			checks = append(checks, chk("collateral", "Залог", "warn", "Покрывает меньше половины кредита: "+f.Collateral.Describe()))
+		default:
+			checks = append(checks, chk("collateral", "Залог", "ok", capitalize(f.Collateral.Describe())))
+		}
+		guarantorOK, guarantorBad := false, false
+		for _, c := range a.Checks {
+			if c.Code == "guarantor" {
+				guarantorOK, guarantorBad = c.Result == "ok", c.Result != "ok"
+			}
+		}
+		if need && liquid*2 < amount && !guarantorOK {
+			reasons := []string{fmt.Sprintf("Для кредита больше %s нужно обеспечение: залог, покрывающий хотя бы половину суммы (%s), или поручительство.",
+				domain.Money(domain.SecurityRequiredFrom), domain.Money(amount/2))}
+			if guarantorBad {
+				reasons = append(reasons, fmt.Sprintf("У поручителя %s в кредитной истории есть просрочки — такое поручительство банк принять не может.", f.Guarantor.FullName))
+			}
+			if f.Collateral.Type != domain.CollateralNone {
+				reasons = append(reasons, fmt.Sprintf("Залог — %s: этого не хватает.", f.Collateral.Describe()))
+			}
+			d = domain.Decision{Type: domain.DecisionNeedInfo, Final: true, Reasons: reasons,
+				Advice: []string{"Укажите другого поручителя — например, второго участника компании.", "Или добавьте залог: недвижимость, транспорт, оборудование или депозит."}}
+		} else {
+			if liquid >= amount {
+				old := d.Rate
+				d.SetOffer(domain.NewQuote(amount, d.Rate-1.0, d.TermMonths))
+				d.Reasons = append(d.Reasons, fmt.Sprintf("Залог полностью покрывает кредит, поэтому ставка ниже на 1 п.п.: %s вместо %s.", domain.Rate(d.Rate), domain.Rate(old)))
+			} else if f.Collateral.Type != domain.CollateralNone {
+				d.Reasons = append(d.Reasons, "Залог учтён: "+f.Collateral.Describe()+".")
+			}
+			if guarantorOK {
+				d.Reasons = append(d.Reasons, "Поручительство "+f.Guarantor.FullName+" принято: кредитная история без просрочек.")
+			} else if guarantorBad {
+				d.Reasons = append(d.Reasons, "Поручительство не учитываем: у поручителя есть просрочки в БКИ. Залога для решения достаточно.")
+			}
+			// окончательные условия сравниваем с предварительными, если банк их подтвердил
+			if pre := a.Preliminary; pre != nil && d.Type == domain.DecisionApproved {
+				q := domain.NewQuote(a.Amount, pre.Rate, a.TermMonths)
+				d.Requested = &q
+			}
+		}
+	}
 	next := map[domain.DecisionType]domain.Status{
 		domain.DecisionApproved: domain.StatusApproved,
 		domain.DecisionCounter:  domain.StatusCounterOffer,
 		domain.DecisionRejected: domain.StatusRejected,
 		domain.DecisionNeedInfo: domain.StatusNeedInfo,
-	}[res.Decision.Type]
+	}[d.Type]
 	comments := map[domain.Status]string{
-		domain.StatusApproved:     "Кредит одобрен",
+		domain.StatusApproved:     "Кредит одобрен по полному скорингу",
 		domain.StatusCounterOffer: "Одобрено на других условиях",
-		domain.StatusRejected:     "Отказ по заявке",
-		domain.StatusNeedInfo:     "Нужно уточнить данные",
+		domain.StatusRejected:     "Отказ по полному скорингу",
+		domain.StatusNeedInfo:     "Уточните обеспечение",
 	}
-	// по быстрой анкете решение предварительное; у одноуровневого продукта (овердрафт) — сразу окончательное
-	res.Decision.Final = !a.TwoLevel()
-	if !res.Decision.Final {
-		comments[domain.StatusApproved] = "Предварительно одобрено — осталось заполнить полную анкету"
-		comments[domain.StatusCounterOffer] = "Предварительно одобрено на других условиях"
-	}
-	obs.Default.Inc("credit_decisions_total", "Решения конвейера", "decision", string(res.Decision.Type), "product", a.ProductID)
+	obs.Default.Inc("credit_decisions_total", "Решения конвейера", "decision", string(d.Type), "product", a.ProductID)
 	return w.update(ctx, a, func(x *domain.Application) error {
 		s := res.Score
 		x.Score = &s
 		x.Factors = res.Factors
-		d := res.Decision
 		x.Decision = &d
-		x.Checks = append(x.Checks, chk("scoring", "Скоринг", resultFor(res.Score), fmt.Sprintf("Балл %d", res.Score)))
+		x.Checks = append(append(x.Checks, chk("scoring", "Полный скоринг", resultFor(res.Score), fmt.Sprintf("Балл %d", res.Score))), checks...)
 		return x.Transition(next, "system", comments[next], w.Now())
-	})
-}
-
-// verify — окончательное решение по полной анкете (уровень 2).
-//
-//   - Сумма больше domain.SecurityRequiredFrom: обеспечение должно покрывать хотя бы половину кредита
-//     залогом (в зачёт — оценка с дисконтом) или быть поручительство без просрочек в БКИ.
-//   - Залог покрывает всю сумму — ставка на 1 п.п. ниже предварительной.
-//   - Иначе — окончательно одобряем на предварительных условиях.
-func (w *Worker) verify(ctx context.Context, a *domain.Application) error {
-	f, pre := a.Full, a.Preliminary
-	if f == nil || pre == nil {
-		return fmt.Errorf("application %s: verification without full form", a.Number)
-	}
-	checks := []domain.Check{chk("full_form", "Полная анкета", "ok",
-		fmt.Sprintf("Сотрудников: %d, цель описана, согласие на выписки получено", f.Employees))}
-
-	need := a.Amount > domain.SecurityRequiredFrom
-	liquid := f.Collateral.LiquidValue()
-	switch {
-	case f.Collateral.Type == domain.CollateralNone && need:
-		checks = append(checks, chk("collateral", "Залог", "warn", "Без залога"))
-	case f.Collateral.Type == domain.CollateralNone:
-		checks = append(checks, chk("collateral", "Залог", "ok", fmt.Sprintf("Не нужен для суммы до %s", domain.GroupDigits(domain.SecurityRequiredFrom))))
-	case need && liquid*2 < a.Amount:
-		checks = append(checks, chk("collateral", "Залог", "warn", "Покрывает меньше половины кредита: "+f.Collateral.Describe()))
-	default:
-		checks = append(checks, chk("collateral", "Залог", "ok", capitalize(f.Collateral.Describe())))
-	}
-
-	guarantorOK, guarantorBad := false, ""
-	if g := f.Guarantor; g != nil {
-		r, err := w.Bureau.Report(ctx, g.INN)
-		if err != nil {
-			return err // ретрай на следующем тике
-		}
-		if r.HasOverdue {
-			guarantorBad = fmt.Sprintf("У поручителя %s в кредитной истории есть просрочки до %d дней — такое поручительство банк принять не может.", g.FullName, r.MaxOverdueDays)
-			checks = append(checks, chk("guarantor", "Поручитель (БКИ)", "fail", fmt.Sprintf("%s: просрочки до %d дней", g.FullName, r.MaxOverdueDays)))
-		} else {
-			guarantorOK = true
-			checks = append(checks, chk("guarantor", "Поручитель (БКИ)", "ok", g.FullName+": просрочек нет"))
-		}
-	}
-
-	if need && liquid*2 < a.Amount && !guarantorOK {
-		reasons := []string{fmt.Sprintf("Для кредита больше %s нужно обеспечение: залог, покрывающий хотя бы половину суммы (%s), или поручительство.",
-			domain.Money(domain.SecurityRequiredFrom), domain.Money(a.Amount/2))}
-		if guarantorBad != "" {
-			reasons = append(reasons, guarantorBad)
-		}
-		if f.Collateral.Type != domain.CollateralNone {
-			reasons = append(reasons, fmt.Sprintf("Залог — %s: этого не хватает.", f.Collateral.Describe()))
-		}
-		d := &domain.Decision{Type: domain.DecisionNeedInfo, Reasons: reasons,
-			Advice: []string{"Укажите другого поручителя — например, второго участника компании.", "Или добавьте залог: недвижимость, транспорт, оборудование или депозит."}}
-		return w.update(ctx, a, func(x *domain.Application) error {
-			x.Checks = append(baseChecks(x.Checks), checks...)
-			x.Decision = d
-			return x.Transition(domain.StatusNeedInfo, "system", "Уточните обеспечение в полной анкете", w.Now())
-		})
-	}
-
-	rate := pre.Rate
-	reasons := []string{"Полная анкета проверена — подтверждаем предварительные условия."}
-	if liquid >= a.Amount {
-		rate -= 1.0
-		reasons = append(reasons, fmt.Sprintf("Залог полностью покрывает кредит, поэтому ставка ниже на 1 п.п.: %s вместо %s.", domain.Rate(rate), domain.Rate(pre.Rate)))
-	} else if f.Collateral.Type != domain.CollateralNone {
-		reasons = append(reasons, "Залог учтён: "+f.Collateral.Describe()+".")
-	}
-	if guarantorOK {
-		reasons = append(reasons, "Поручительство "+f.Guarantor.FullName+" принято: кредитная история без просрочек.")
-	} else if guarantorBad != "" {
-		reasons = append(reasons, "Поручительство не учитываем: у поручителя есть просрочки в БКИ. Залога для решения достаточно.")
-	}
-	preQuote := domain.NewQuote(a.Amount, pre.Rate, a.TermMonths)
-	d := domain.Decision{Type: domain.DecisionApproved, Reasons: reasons, Requested: &preQuote, Final: true}
-	d.SetOffer(domain.NewQuote(a.Amount, rate, a.TermMonths))
-	obs.Default.Inc("credit_decisions_total", "Решения конвейера", "decision", "final_approved", "product", a.ProductID)
-	return w.update(ctx, a, func(x *domain.Application) error {
-		x.Checks = append(baseChecks(x.Checks), checks...)
-		x.Decision = &d
-		return x.Transition(domain.StatusApproved, "system", "Кредит одобрен окончательно", w.Now())
 	})
 }
 
@@ -356,17 +359,6 @@ func capitalize(s string) string {
 		return s
 	}
 	return strings.ToUpper(string(r[0])) + string(r[1:])
-}
-
-// baseChecks — проверки уровня 1 без результатов прошлой проверки полной анкеты (при повторной отправке).
-func baseChecks(cs []domain.Check) []domain.Check {
-	out := make([]domain.Check, 0, len(cs))
-	for _, c := range cs {
-		if c.Code != "full_form" && c.Code != "collateral" && c.Code != "guarantor" {
-			out = append(out, c)
-		}
-	}
-	return out
 }
 
 func resultFor(score int) string {

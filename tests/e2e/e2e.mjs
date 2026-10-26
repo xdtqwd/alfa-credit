@@ -2,6 +2,7 @@
 // Запуск: сервер должен работать на BASE_URL (по умолчанию http://localhost:8080)
 //   PIPELINE_STEP_DELAY=1s make run   # в одном терминале
 //   make e2e                          # в другом (нужны Node 18+ и `npm i -g playwright`)
+import { Buffer } from 'node:buffer';
 import { chromium, devices } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:8080';
@@ -47,7 +48,7 @@ async function diagnose(page, errors) {
   const url = page.url();
   const shown = await page
     .evaluate(() =>
-      [...document.querySelectorAll('#decision h2, #todo b, .page-head .status, .step.is-current')]
+      [...document.querySelectorAll('#decision h2, #prescore-result h2, #todo b, .page-head .status, .step.is-current')]
         .map((e) => e.textContent.trim())
         .filter(Boolean)
         .slice(0, 6)
@@ -89,49 +90,78 @@ async function login(page, phone) {
   await page.waitForSelector('#requisites');
 }
 
-/** Из кабинета — новая анкета (кнопка в шапке). */
-async function newApplication(page) {
-  await page.click('[data-header=new-loan]');
-  await page.waitForSelector('#f-revenue');
-}
-
 const saved = (page, timeout = 5000) =>
   page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout });
 
-async function fillAndSubmit(page, { revenue, obligations } = {}) {
-  await page.waitForSelector('#f-revenue');
-  if (revenue) await page.fill('#f-revenue', String(revenue));
-  else await page.click('[data-use-fns]');
-  if (obligations) await page.fill('#f-obligations', String(obligations));
-  await page.check('#f-consent');
-  await saved(page);
-  await page.click('#submit');
-  await page.waitForSelector('.stepper');
+/** Сумма в калькуляторе: вписать числом и применить. */
+async function setAmount(page, box, amount) {
+  await page.fill(`${box} [data-calc=amount-text]`, String(amount));
+  await page.press(`${box} [data-calc=amount-text]`, 'Enter');
 }
 
-/** Уровень 2: принять предварительные условия → заполнить полную анкету → отправить. */
-async function fullFormAndSubmit(page, opts) {
-  await page.click('#todo [data-action=accept]');
-  await fillFull(page, opts);
+/**
+ * 1-й уровень — предварительный расчёт без входа (страница #/apply уже открыта).
+ * Возвращает тип предварительного решения.
+ */
+async function level1(page, { product = 'business-dev', amount, inn = '7701234567', revenue, obligations } = {}) {
+  await page.waitForSelector('#ap-inn');
+  if (product && !(await page.locator(`[data-product="${product}"].is-on`).count())) await page.click(`[data-product="${product}"]`);
+  if (amount) await setAmount(page, '#ap-calc', amount);
+  await page.selectOption('#ap-inn', inn);
+  await page.waitForSelector('#ap-company:not([hidden])');
+  if (revenue) await page.fill('#ap-revenue', String(revenue));
+  else await page.click('[data-use-fns]');
+  if (obligations) await page.fill('#ap-obligations', String(obligations));
+  await page.click('#prescore');
+  await page.waitForSelector('#prescore-result');
+  return page.getAttribute('#prescore-result', 'data-decision');
 }
-async function fillFull(page, { guarantorInn, collateral } = {}) {
-  await page.waitForSelector('#ff-employees');
-  await page.fill('#ff-employees', '25');
-  await page.click('[data-premises=rent]');
-  await page.fill('#ff-purpose', 'Открытие второго магазина и закупка торгового оборудования');
+
+async function prescore(page, opts) {
+  await page.goto(BASE + '/#/apply');
+  return level1(page, opts);
+}
+
+/** Начало 2-го уровня: вход через Госуслуги из результата расчёта (учётка руководителя выбрана сразу). */
+async function esia(page) {
+  await page.click('#esia-go');
+  const step = await Promise.race([
+    page.waitForSelector('#esia-ok').then(() => 'modal'),
+    page.waitForSelector('[data-key="consent"]').then(() => 'form'),
+  ]);
+  if (step === 'modal') await page.click('#esia-ok');
+  await page.waitForSelector('[data-key="consent"]');
+}
+
+/** 2-й уровень: обеспечение, протокол, согласие → полный скоринг. */
+async function level2(page, { guarantorInn, collateral, protocol } = {}) {
+  await page.waitForSelector('[data-key="consent"]');
   if (collateral) {
     await page.click(`[data-collateral=${collateral.type}]`);
     await page.fill('#ff-coll-value', String(collateral.value));
   }
   if (guarantorInn) {
     if (!(await page.isChecked('#ff-guarantor'))) await page.check('#ff-guarantor');
-    await page.fill('#ff-g-name', 'Смирнов Алексей Викторович');
+    await page.fill('#ff-g-name', 'Кузнецов Олег Петрович');
     await page.fill('#ff-g-inn', guarantorInn);
   }
-  await page.check('#ff-consent');
+  if (protocol)
+    await page.setInputFiles('#ff-protocol', {
+      name: 'Протокол ОСУ №3.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 demo'),
+    });
+  if (!(await page.isChecked('#ff-consent'))) await page.check('#ff-consent');
   await saved(page);
   await page.click('#submit');
   await page.waitForSelector('.stepper');
+}
+
+/** Весь путь клиента до окончательного решения. */
+async function applyFull(page, opts = {}) {
+  await prescore(page, opts);
+  await esia(page);
+  await level2(page, opts);
 }
 
 const decision = (page, tone) => page.waitForSelector(`#decision.decision--${tone}`, { timeout: DECISION });
@@ -149,15 +179,24 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     assert(await page.locator('[data-header=login]').isVisible(), 'нет кнопки «Войти»');
   });
 
-  await test('Без входа нельзя оформить: окно входа объясняет зачем, после входа — сразу анкета продукта', async (page) => {
+  await test('«Оформить» ведёт на 1-й уровень без входа: из карточки — с кредитом, с первого экрана — без, из калькулятора — с его условиями', async (page) => {
     await page.goto(BASE + '/');
     await page.click('#products [data-start="working-capital"]');
-    await page.waitForSelector('#auth-phone');
-    assert(norm(await page.textContent('.auth__reason')).includes('войдите'), 'нет объяснения, зачем вход');
-    await page.click('[data-demo="79000000001"]');
-    await page.waitForURL(/#\/cabinet\/applications\/[0-9a-f]+/);
-    await page.waitForSelector('#f-revenue');
-    assert(norm(await page.textContent('h1')).includes('Оборотный кредит'), 'открыта не та анкета');
+    await page.waitForSelector('#ap-inn');
+    assert(page.url().endsWith('#/apply'), 'открыт не 1-й уровень: ' + page.url());
+    assert((await page.locator('#auth-phone').count()) === 0, 'расчёт не должен требовать входа');
+    assert((await page.locator('[data-product="working-capital"].is-on').count()) === 1, 'кредит из карточки не сохранился');
+    await page.goto(BASE + '/');
+    await page.click('.lp-hero [data-start]');
+    await page.waitForSelector('#ap-inn');
+    assert((await page.locator('[data-product].is-on').count()) === 0, 'с первого экрана кредит выбирает сам клиент');
+    assert(await page.isDisabled('#prescore'), 'без кредита, компании и выручки рассчитывать нечего');
+    await page.goto(BASE + '/');
+    await setAmount(page, '#calc', 4000000);
+    await page.click('#calc [data-calc-apply]');
+    await page.waitForSelector('[data-product="business-dev"].is-on');
+    assert(norm(await page.inputValue('#ap-calc [data-calc=amount-text]')) === '4 000 000 ₽', 'сумма калькулятора не перенеслась');
+    assert(norm(await page.textContent('.badge-demo')) === 'демо', 'ИНН из списка должен быть помечен как демо');
   });
 
   await test('Калькулятор показывает расчёт сервера (единый источник)', async (page) => {
@@ -233,21 +272,31 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     }
   });
 
-  await test('Две анкеты: быстрая → предварительное решение → полная → окончательное → подписание → выдача → оплата', async (page) => {
-    await login(page, '79000000001');
-    await newApplication(page);
-    assert((await page.locator('.levels__item.is-current').count()) === 1, 'нет полосы уровней анкеты');
-    assert((await page.locator('#f-employees').count()) === 0, 'в быстрой анкете не должно быть вопросов полной');
-    await fillAndSubmit(page);
-    await decision(page, 'ok');
-    assert(norm(await page.textContent('.page-head .status')) === 'Предварительно одобрено', 'решение по быстрой анкете — предварительное');
-    assert(norm(await page.textContent('#todo')).includes('полную анкету'), 'нет подсказки про полную анкету');
-    await fullFormAndSubmit(page);
+  await test('Два уровня: расчёт без входа → Госуслуги → документы → полный скоринг → подписание → выдача → оплата', async (page) => {
+    assert((await prescore(page)) === 'approved', 'предварительный расчёт должен одобрить');
+    const pre = norm(await page.textContent('#prescore-result'));
+    assert(pre.includes('Предварительно одобрено') && pre.includes('без кредитной истории'), 'не объяснено, что расчёт предварительный');
+    assert((await page.locator('#prescore-result .scale').count()) === 0, 'у упрощённого скоринга не должно быть шкалы порогов');
+    await page.click('#esia-go');
+    await page.waitForSelector('.esia__person.is-on');
+    assert(
+      norm(await page.textContent('.esia__person.is-on')).includes('Смирнов'),
+      'учётка руководителя выбранной компании должна быть выбрана сразу',
+    );
+    assert(norm(await page.textContent('.modal')).includes('имитация'), 'окно Госуслуг должно честно называться демо');
+    await page.click('#esia-ok');
+    await page.waitForSelector('[data-key="consent"]');
+    assert(norm(await page.textContent('[data-key="identity"]')).includes('Смирнов Алексей Викторович'), 'нет личности из Госуслуг');
+    assert((await page.inputValue('#ff-p-number')) === '345678', 'паспорт руководителя не подставлен из Госуслуг');
+    assert((await page.locator('[data-key="protocol"]').count()) === 0, 'протокол нужен только для суммы больше 25 млн');
+    await level2(page);
     await page.waitForSelector('#decision[data-decision=approved] .actions', { timeout: DECISION });
-    await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
-      timeout: DECISION,
-    });
-    assert(norm(await page.textContent('#view')).includes('Полная анкета'), 'после отправки не видно, что указано в полной анкете');
+    const table = norm(await page.textContent('table.compare'));
+    assert(
+      table.includes('Предварительно') && table.includes('Окончательно') && table.includes('−1,0 п.п.'),
+      'нет сравнения с расчётом: ' + table,
+    );
+    assert(norm(await page.textContent('#view')).includes('Документы 2-го уровня'), 'после отправки не видно приложенного');
     const before = (await apiAs(page, 'GET', '/me')).json.balance;
     await page.click('#todo [data-action=accept]');
     await page.check('#sign-ok');
@@ -267,96 +316,108 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     await page.waitForSelector(`.loan[data-loan="${app.number}"]`);
   });
 
-  await test('Контрпредложение: таблица «Вы просили / Банк предлагает» и объяснение на цифрах анкеты', async (page) => {
-    await login(page, '79000000002');
-    await page.goto(BASE + '/#/');
-    await page.click('#products [data-start="business-dev"]');
-    await page.waitForSelector('[data-calc=amount-text]');
-    await page.click('[data-calc=amount-text]');
-    await page.keyboard.press('ControlOrMeta+a');
-    await page.keyboard.type('20000000');
-    await page.keyboard.press('Enter');
-    await fillAndSubmit(page, { obligations: 200000 });
-    await decision(page, 'warn');
-    const table = norm(await page.textContent('table.compare'));
+  await test('Контрпредложение уже на 1-м уровне: таблица «Вы просили / Банк предлагает» и объяснение на цифрах', async (page) => {
+    const type = await prescore(page, { inn: '2224000012', amount: 20000000, obligations: 200000 });
+    assert(type === 'counter_offer', 'ожидалось контрпредложение, а не ' + type);
+    const table = norm(await page.textContent('#prescore-result table.compare'));
     for (const col of ['Вы просили', 'Банк предлагает', 'Разница', 'Платёж в месяц', 'Переплата', 'Ставка', 'Срок'])
       assert(table.includes(col), 'в таблице нет: ' + col);
-    const why = norm(await page.textContent('#decision'));
+    const why = norm(await page.textContent('#prescore-result'));
     assert(why.includes('1 500 000 ₽') && why.includes('50%'), 'объяснение не опирается на выручку из анкеты');
+    assert(await page.locator('#esia-go').isVisible(), 'с другими условиями тоже можно перейти ко 2-му уровню');
   });
 
-  await test('Уточнение: выручка сильно выше ФНС → «Исправьте данные», после правки — снова в конвейер', async (page) => {
-    await login(page, '79000000002');
-    await newApplication(page);
-    await fillAndSubmit(page, { revenue: 50000000 });
-    await page.waitForSelector('#decision[data-decision=need_info]', { timeout: DECISION });
-    assert(norm(await page.textContent('#todo')).includes('Исправьте данные'), 'нет подсказки, что делать');
-    await page.click('#todo [data-action=fix]');
-    await page.waitForSelector('#f-revenue');
-    assert(norm(await page.textContent('.notice--block')).includes('Исправьте данные'), 'в анкете не видно, что исправить');
+  await test('Уточнение на 1-м уровне: выручка сильно выше ФНС → «Что сделать», после правки — пересчёт', async (page) => {
+    assert((await prescore(page, { inn: '2224000012', revenue: 50000000 })) === 'need_info', 'ожидалось уточнение');
+    assert(norm(await page.textContent('#prescore-result')).includes('Что сделать'), 'нет подсказки, что делать');
+    assert((await page.locator('#esia-go').count()) === 0, 'с неуточнённой выручкой дальше не пускаем');
     await page.click('[data-use-fns]');
-    await saved(page);
-    await page.click('#submit');
-    await decision(page, 'ok');
+    await page.waitForSelector('#ap-result .note');
+    assert(norm(await page.textContent('#ap-result')).includes('рассчитайте снова'), 'старый расчёт должен сброситься');
+    await page.click('#prescore');
+    await page.waitForSelector('#prescore-result[data-decision=approved]');
   });
 
-  await test('Полная анкета: поручитель с просрочками → уточнение, залог на всю сумму → ставка ниже на 1 п.п.', async (page) => {
-    await login(page, '79000000001');
-    await page.goto(BASE + '/#/');
-    await page.click('#products [data-start="business-dev"]');
-    await page.waitForSelector('[data-calc=amount-text]');
-    await page.click('[data-calc=amount-text]');
-    await page.keyboard.press('ControlOrMeta+a');
-    await page.keyboard.type('8000000');
-    await page.keyboard.press('Enter');
-    await fillAndSubmit(page);
-    await decision(page, 'ok');
-    await page.click('#todo [data-action=accept]');
-    await page.waitForSelector('#ff-employees');
-    assert(norm(await page.textContent('[data-sec="1"]')).includes('нужен залог'), 'для 8 млн не объяснено, что нужно обеспечение');
-    await page.reload(); // после перезагрузки открывается та же полная анкета
-    await fillFull(page, { guarantorInn: '540100000009' });
+  await test('2-й уровень: поручитель с просрочками → уточнение, залог на всю сумму → ставка ниже', async (page) => {
+    await prescore(page, { amount: 8000000 });
+    await esia(page);
+    assert(norm(await page.textContent('[data-key="security"]')).includes('нужен залог'), 'для 8 млн не объяснено, что нужно обеспечение');
+    await page.reload(); // после перезагрузки открывается та же анкета 2-го уровня
+    await level2(page, { guarantorInn: '540100000009' });
     await page.waitForSelector('#decision[data-decision=need_info]', { timeout: DECISION });
     assert(norm(await page.textContent('#decision')).includes('просрочки'), 'не объяснено, почему не подошёл поручитель');
     await page.click('#todo [data-action=fix]');
-    await page.waitForSelector('#ff-employees');
+    await page.waitForSelector('[data-key="consent"]');
     await page.click('[data-collateral=realty]');
     await page.fill('#ff-coll-value', '15000000');
     assert(norm(await page.textContent('#ff-coll-info')).includes('ниже на 1 п.п.'), 'не подсказано, что залог снизит ставку');
     await saved(page);
     await page.click('#submit');
-    await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
-      timeout: DECISION,
-    });
+    await page.waitForSelector('#decision[data-decision=approved]', { timeout: DECISION });
     const table = norm(await page.textContent('table.compare'));
     assert(
-      table.includes('Предварительно') && table.includes('Окончательно') && table.includes('−1,0 п.п.'),
+      table.includes('Предварительно') && table.includes('Окончательно') && table.includes('−2,0 п.п.'),
       'нет сравнения ставок: ' + table,
     );
   });
 
-  await test('Отказ объясняется и предлагает, что сделать', async (page) => {
-    await login(page, '79000000003');
-    await newApplication(page);
-    await fillAndSubmit(page);
+  await test('ООО и больше 25 млн: без протокола о крупной сделке не отправить', async (page) => {
+    await prescore(page, { amount: 26000000 });
+    await esia(page);
+    await page.waitForSelector('[data-key="protocol"]');
+    await page.click('[data-collateral=realty]');
+    await page.fill('#ff-coll-value', '40000000');
+    await page.check('#ff-consent');
+    await saved(page);
+    assert(await page.isDisabled('#submit'), 'без протокола отправлять нельзя');
+    await page.setInputFiles('#ff-protocol', {
+      name: 'Протокол ОСУ №3.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 demo'),
+    });
+    assert(norm(await page.textContent('#ff-protocol-name')).includes('Протокол ОСУ №3.pdf'), 'не видно выбранного файла');
+    await saved(page);
+    await page.click('#submit');
+    await page.waitForSelector('#decision', { timeout: DECISION });
+    await page.waitForFunction(() => !/Считаем/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
+      timeout: DECISION,
+    });
+    assert(norm(await page.textContent('.checks')).includes('Решение об одобрении крупной сделки'), 'протокол не попал в проверки банка');
+  });
+
+  await test('Госуслуги: учётка не руководителя выбранной компании — понятная ошибка, заявка не создаётся', async (page) => {
+    await prescore(page);
+    await page.click('#esia-go');
+    await page.click('[data-person="esia-2"]');
+    await page.click('#esia-ok');
+    await page.waitForSelector('.toast--error');
+    assert(norm(await page.textContent('.toast--error')).includes('не руководит'), 'нет объяснения, почему нельзя');
+    assert(page.url().endsWith('#/apply'), 'должны остаться на расчёте');
+    assert((await apiAs(page, 'GET', '/applications')).json.length === 0, 'заявка не должна создаться');
+  });
+
+  await test('Отказ на полном скоринге объясняется: просрочки в БКИ видны только после входа', async (page) => {
+    assert((await prescore(page, { inn: '5401000009', obligations: 300000 })) === 'approved', 'без кредитной истории расчёт одобряет');
+    await esia(page);
+    await level2(page);
     await decision(page, 'bad');
     const txt = norm(await page.textContent('#decision'));
     assert(txt.includes('Почему так') && txt.includes('просрочк'), 'нет причины отказа');
     assert(txt.includes('Что можно сделать'), 'нет советов');
   });
 
-  await test('Автосохранение честно показывает ошибку без сети и досохраняет после восстановления', async (page, ctx) => {
-    await login(page, '79000000001');
-    await newApplication(page);
+  await test('Автосохранение 2-го уровня честно показывает ошибку без сети и досохраняет после восстановления', async (page, ctx) => {
+    await prescore(page);
+    await esia(page);
     await ctx.setOffline(true);
-    await page.fill('#f-obligations', '123000');
+    await page.check('#ff-consent');
     await page.waitForFunction(() => document.querySelector('#save-state')?.classList.contains('is-error'), null, { timeout: 5000 });
     assert(norm(await page.textContent('#save-state')).includes('Не сохранено'), 'ошибка не показана');
     await ctx.setOffline(false);
     await saved(page, 10000);
     const id = page.url().split('/').pop();
     const a = (await apiAs(page, 'GET', '/applications/' + id)).json;
-    assert(a.financials.monthly_obligations === 123000, 'правка не дошла до сервера');
+    assert(a.full_form.consent === true, 'правка не дошла до сервера');
   });
 
   await test('Страницы и шапка не вылезают за экран (десктоп, планшет, телефон)', async (page) => {
@@ -370,6 +431,9 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
       await page.goto(BASE + '/#/');
       await page.waitForSelector('.hero h1');
       assert((await overflow()) <= 1, `горизонтальная прокрутка на главной, ${w}px`);
+      await page.goto(BASE + '/#/apply');
+      await page.waitForSelector('#ap-inn');
+      assert((await overflow()) <= 1, `горизонтальная прокрутка на расчёте, ${w}px`);
     }
     await page.setViewportSize({ width: 1440, height: 900 });
     await login(page, '79000000001');
@@ -400,7 +464,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
     });
     await page.goto(BASE + '/#/');
     await page.click('#products [data-start="business-dev"]');
-    await page.waitForSelector('#f-revenue');
+    await page.waitForSelector('#ap-inn');
     await page.waitForTimeout(1500); // ответы калькулятора приходят на уже закрытую страницу
     await page.unroute('**/api/v1/calc');
   });
@@ -520,19 +584,15 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   });
 
   await test('Овердрафт: срок фиксированный — без ползунка, платёж считается', async (page) => {
-    await login(page, '79000000001');
-    const a = (await apiAs(page, 'POST', '/applications', { product_id: 'overdraft' })).json;
-    await page.goto(BASE + '/#/cabinet/applications/' + a.id);
-    await page.waitForSelector('#form-calc [data-calc-fixed]');
-    assert(
-      (await page.locator('#form-calc input[type=range][data-calc=term]').count()) === 0,
-      'у овердрафта не должно быть ползунка срока',
-    );
-    assert((await page.locator('#form-calc input[type=range][data-calc=amount]').count()) === 1, 'ползунок суммы должен остаться');
-    assert(norm(await page.inputValue('#form-calc [data-calc=term-text]')) === '12 месяцев', 'срок овердрафта — 12 месяцев');
+    await page.goto(BASE + '/#/apply');
+    await page.click('[data-product="overdraft"]');
+    await page.waitForSelector('#ap-calc [data-calc-fixed]');
+    assert((await page.locator('#ap-calc input[type=range][data-calc=term]').count()) === 0, 'у овердрафта не должно быть ползунка срока');
+    assert((await page.locator('#ap-calc input[type=range][data-calc=amount]').count()) === 1, 'ползунок суммы должен остаться');
+    assert(norm(await page.inputValue('#ap-calc [data-calc=term-text]')) === '12 месяцев', 'срок овердрафта — 12 месяцев');
     await page.waitForFunction(() => /\d/.test(document.querySelector('#sum-pay')?.textContent || ''));
     await page.click('[data-product="business-dev"]');
-    await page.waitForSelector('#form-calc input[type=range][data-calc=term]');
+    await page.waitForSelector('#ap-calc input[type=range][data-calc=term]');
   });
 
   await test('Телефон: меню профиля открывается касанием, помещается в экран, не закрывается при прокрутке', async (page, ctx) => {
@@ -567,22 +627,18 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   });
 
   await test('Разбор балла: одобрение — шкала с отметкой и плюсы в факторах', async (page) => {
-    await login(page, '79000000001');
-    await newApplication(page);
-    await fillAndSubmit(page);
+    await applyFull(page);
     await decision(page, 'ok');
     const score = norm(await page.textContent('.acc.score'));
     assert(
-      score.includes('зона одобрения') && score.includes('Стартовый балл') && /\+\d+/.test(score),
+      score.includes('зона одобрения') && score.includes('Стартовый балл') && score.includes('Рейтинг БКИ') && /\+\d+/.test(score),
       'нет разбора балла: ' + score.slice(0, 120),
     );
     assert(await page.locator('.acc.score .scale__mark').isVisible(), 'на шкале нет отметки балла');
   });
 
   await test('Разбор балла: отказ — минусы в факторах; аккордеон сворачивается', async (page) => {
-    await login(page, '79000000003');
-    await newApplication(page);
-    await fillAndSubmit(page);
+    await applyFull(page, { inn: '5401000009', obligations: 300000 });
     await decision(page, 'bad');
     assert((await page.locator('.acc.score .factor--minus').count()) >= 1, 'в разборе нет минусов');
     assert(norm(await page.textContent('.acc.score')).includes('зона отказа'), 'нет зоны отказа');
@@ -594,9 +650,7 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   });
 
   await test('Узкие экраны: этапы заявки и список заявок не наезжают друг на друга', async (page) => {
-    await login(page, '79000000003');
-    await newApplication(page);
-    await fillAndSubmit(page);
+    await applyFull(page, { inn: '5401000009', obligations: 300000 });
     for (const w of [1024, 768, 390]) {
       await page.setViewportSize({ width: w, height: 900 });
       await page.waitForTimeout(150);
@@ -617,14 +671,12 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   });
 
   await test('Платформа: действия с деньгами идут с Idempotency-Key, клиенту кабинет банка закрыт', async (page) => {
-    await login(page, '79000000001');
     const keys = [];
     page.on('request', (r) => {
       if (r.method() === 'POST' && /\/applications(\/[^/]+\/(submit|accept|sign|pay))?$/.test(r.url()))
         keys.push(r.headers()['idempotency-key']);
     });
-    await newApplication(page);
-    await fillAndSubmit(page);
+    await applyFull(page);
     assert(
       keys.length >= 2 && keys.every((k) => k && k.length >= 16),
       'POST-действия должны идти с Idempotency-Key: ' + JSON.stringify(keys),
@@ -722,8 +774,18 @@ const menuOpen = (page) => page.locator('.menu-wrap .menu').count();
   });
 
   await test('Чужую заявку открыть нельзя', async (page, ctx) => {
-    await login(page, '79000000001');
-    const mine = (await apiAs(page, 'POST', '/applications', { product_id: 'business-dev' })).json;
+    await page.goto(BASE + '/#/');
+    await apiAs(page, 'POST', '/auth/esia', { person_id: 'esia-1' });
+    const mine = (
+      await apiAs(page, 'POST', '/applications', {
+        product_id: 'business-dev',
+        amount: 3000000,
+        term_months: 24,
+        inn: '7701234567',
+        financials: { annual_revenue: 84000000 },
+      })
+    ).json;
+    assert(mine?.id, 'заявка не создалась');
     const other = await ctx.browser().newContext();
     const p2 = await other.newPage();
     await login(p2, '79000000002');

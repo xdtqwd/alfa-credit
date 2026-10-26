@@ -47,7 +47,7 @@ func TestEmployeeCannotActAsClient(t *testing.T) {
 	for _, ep := range [][2]string{
 		{"GET", "/api/v1/applications"}, {"POST", "/api/v1/applications"}, {"POST", "/api/v1/applications/x/pay"},
 	} {
-		if r, _ := h.do(emp, ep[0], ep[1], map[string]any{"product_id": "business-dev", "amount": 1_000_000, "term_months": 12}, nil); r.StatusCode != 403 {
+		if r, _ := h.do(emp, ep[0], ep[1], level1("business-dev", 1_000_000, 12), nil); r.StatusCode != 403 {
 			t.Fatalf("employee %s %s = %d, want 403", ep[0], ep[1], r.StatusCode)
 		}
 	}

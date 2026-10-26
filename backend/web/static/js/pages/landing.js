@@ -102,7 +102,7 @@ export default async function landing(root, { signal, scroll }) {
         <div class="lp-hero__text">
           <h1>Деньги, когда они нужны бизнесу</h1>
           <p class="lp-hero__lead">Кредит на развитие бизнеса – решение за 15 секунд, без визита в банк</p>
-          <button class="lp-btn lp-btn--hero" data-start="business-dev">Оформить заявку</button>
+          <button class="lp-btn lp-btn--hero" data-start="">Оформить заявку</button>
         </div>
         <img class="lp-hero__art" src="${IMG}hero.webp" width="519" height="323" alt="" fetchpriority="high">
       </div>
@@ -285,7 +285,7 @@ export default async function landing(root, { signal, scroll }) {
     signal,
   );
   on(root, 'click', '[data-calc-apply]', () => startApplication(p.id, amount, term), signal);
-  on(root, 'click', '[data-start]', (_, el) => startApplication(el.dataset.start), signal);
+  on(root, 'click', '[data-start]', (_, el) => startApplication(el.dataset.start || null), signal);
 
   if (scroll) requestAnimationFrame(() => $(`#${scroll}`, root)?.scrollIntoView({ behavior: 'smooth' }));
 }

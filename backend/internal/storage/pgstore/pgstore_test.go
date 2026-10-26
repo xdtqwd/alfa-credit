@@ -71,8 +71,8 @@ func seedUser(t *testing.T, s *Store, balance int64) *domain.User {
 func newApp(clientID string) *domain.Application {
 	now := time.Now()
 	return &domain.Application{ID: "a-" + rnd(), ClientID: clientID, ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24,
-		INN: "7701234567", Status: domain.StatusDraft, Checks: []domain.Check{}, Payments: []domain.Payment{},
-		History: []domain.Event{{Status: domain.StatusDraft, At: now, Actor: "client"}}, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now}
+		INN: "7701234567", Status: domain.StatusFullForm, Level: 2, Checks: []domain.Check{}, Payments: []domain.Payment{},
+		History: []domain.Event{{Status: domain.StatusFullForm, At: now, Actor: "client"}}, CreatedAt: now, UpdatedAt: now, StatusChangedAt: now}
 }
 
 func TestMigrateIsIdempotent(t *testing.T) {

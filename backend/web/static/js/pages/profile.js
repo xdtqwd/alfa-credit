@@ -120,7 +120,7 @@ export default async function profile(root, { signal }) {
 
   on(root, 'click', '[data-copy-all]', () => copy(requisitesText(), 'Реквизиты скопированы'), signal);
   on(root, 'click', '[data-copy]', (_, el) => copy(el.dataset.copy), signal);
-  on(root, 'click', '[data-new-loan]', () => startApplication('business-dev'), signal);
+  on(root, 'click', '[data-new-loan]', () => startApplication(), signal);
   on(
     root,
     'click',

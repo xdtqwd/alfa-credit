@@ -3,8 +3,11 @@ info:
   title: Кредитный кабинет предпринимателя — API
   version: 0.2.0
   description: |
-    REST API кредитного конвейера для МСБ. Клиентские методы требуют входа: `POST /api/v1/auth/login`
-    ставит HttpOnly-cookie `sid` (SameSite=Strict, TTL 12 ч). Без сессии нельзя оформить, подписать или оплатить (401).
+    REST API кредитного конвейера для МСБ. Анкета — в два уровня. 1-й уровень — без входа: `POST /api/v1/prescore`
+    считает предварительное решение по упрощённому скорингу (реестр, ФНС, нагрузка — без кредитной истории).
+    2-й уровень начинается со входа через Госуслуги (`POST /api/v1/auth/esia`, в демо — мок ЕСИА): тогда
+    `POST /api/v1/applications` создаёт заявку, клиент прикладывает документы, а конвейер считает полный скоринг.
+    Вход ставит HttpOnly-cookie `sid` (SameSite=Strict, TTL 12 ч); без сессии нельзя подать заявку, подписать или оплатить (401).
     Изменяющие запросы с чужого Origin отклоняются (403). Методы банка — заголовок `X-Bank-Token`.
     В проде — OIDC (Альфа ID) на API Gateway.
 
@@ -46,7 +49,7 @@ paths:
   /api/v1/security-rules:
     get:
       tags: [catalog]
-      summary: Правила обеспечения для полной анкеты — с какой суммы нужен залог или поручитель, виды залога и дисконты
+      summary: Пороги 2-го уровня — с какой суммы нужен залог или поручитель, с какой для ООО нужен протокол, виды залога и дисконты
       responses:
         '200':
           description: OK
@@ -56,8 +59,43 @@ paths:
                 type: object
                 properties:
                   required_from: { type: integer, example: 5000000 }
+                  protocol_from: { type: integer, example: 25000000 }
                   kinds: { type: array, items: { type: object, properties: { type: { type: string }, name: { type: string }, discount: { type: number } } } }
-                  premises: { type: array, items: { type: object, properties: { type: { type: string }, name: { type: string } } } }
+  /api/v1/demo/companies:
+    get:
+      tags: [catalog]
+      summary: Демо-компании для поля ИНН на 1-м уровне (ответы реестра, ФНС и БКИ для них известны заранее)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, properties: { inn: { type: string }, name: { type: string }, type: { type: string }, director: { type: string }, hint: { type: string } } }
+  /api/v1/prescore:
+    post:
+      tags: [applications]
+      summary: Предварительный расчёт 1-го уровня — без входа и без заявки
+      description: |
+        Упрощённый скоринг: компания в ЕГРЮЛ/ЕГРИП, сверка выручки с ФНС и долговая нагрузка. Кредитная история не
+        запрашивается, поэтому пороги балла не применяются: до 50% выручки — approved, больше — counter_offer с подобранной
+        суммой, выручка больше ФНС в 1,5 раза — need_info, компания не найдена или ликвидирована — rejected.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Level1' } } } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  company: { $ref: '#/components/schemas/Company' }
+                  checks: { type: array, items: { $ref: '#/components/schemas/Check' } }
+                  score: { type: integer, description: 'балл без кредитной истории' }
+                  factors: { type: array, items: { type: object, properties: { name: { type: string }, impact: { type: integer }, explain: { type: string } } } }
+                  decision: { $ref: '#/components/schemas/Decision' }
+        '422': { $ref: '#/components/responses/Validation' }
   /api/v1/scoring/scale:
     get:
       tags: [catalog]
@@ -74,15 +112,14 @@ paths:
     post:
       tags: [catalog]
       summary: Расчёт аннуитетного платежа
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateInput' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CalcInput' } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CalcResult' } } } }
         '422': { $ref: '#/components/responses/Validation' }
   /api/v1/companies/{inn}:
     get:
       tags: [catalog]
-      summary: Поиск компании по ИНН (ЕГРЮЛ/ЕГРИП, мок)
-      security: [{ client: [] }]
+      summary: Поиск компании по ИНН (ЕГРЮЛ/ЕГРИП, мок) — без входа, для 1-го уровня
       parameters: [{ name: inn, in: path, required: true, schema: { type: string, pattern: '^\d{10}(\d{2})?$' } }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Company' } } } }
@@ -92,10 +129,14 @@ paths:
   /api/v1/applications:
     post:
       tags: [applications]
-      summary: Создать черновик анкеты сразу из калькулятора
+      summary: Создать заявку после входа через Госуслуги — сразу на 2-м уровне (full_form)
+      description: |
+        Данные 1-го уровня проверяются заново: предварительный расчёт считает сервер. Нужны личность из Госуслуг
+        (иначе 422 `identity`) и компания, которой человек руководит по ЕГРЮЛ (иначе 422 `inn`); предварительный
+        расчёт должен одобрить (иначе 422 `prescore`). Паспорт руководителя подставляется, если в анкете руководитель сам.
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateInput' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Level1' } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Application' } } } }
         '422': { $ref: '#/components/responses/Validation' }
@@ -125,7 +166,7 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
     patch:
       tags: [applications]
-      summary: Автосохранение анкеты (частичное обновление). При смене ИНН подтягивается компания.
+      summary: Автосохранение 2-го уровня анкеты (full_form) — пока статус full_form или need_info
       security: [{ client: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DraftPatch' } } } }
       responses:
@@ -136,7 +177,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
       tags: [applications]
-      summary: 'Отправить: быстрая анкета (draft|need_info → submitted) или полная (full_form|need_info → verification)'
+      summary: 'Отправить 2-й уровень на полный скоринг (full_form|need_info → submitted)'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
@@ -147,7 +188,7 @@ paths:
     parameters: [{ $ref: '#/components/parameters/Id' }]
     post:
       tags: [applications]
-      summary: 'Принять решение: предварительное → full_form (открывается полная анкета), окончательное → signing'
+      summary: 'Принять окончательное решение (approved|counter_offer → signing); договор — на условиях решения'
       parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
       security: [{ client: [] }]
       responses:
@@ -184,6 +225,29 @@ paths:
         '200': { description: OK, headers: { Set-Cookie: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '401': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
+  /api/v1/auth/esia:
+    post:
+      tags: [auth]
+      summary: Вход через Госуслуги (ЕСИА) — начало 2-го уровня; только APP_MODE=demo (мок), иначе 404
+      description: Аккаунт находится по подтверждённому телефону из Госуслуг или создаётся (компания — из реестра). Личность сохраняется в профиле.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [person_id], properties: { person_id: { type: string, example: esia-1 } } } } } }
+      responses:
+        '200': { description: OK, headers: { Set-Cookie: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Validation' }
+  /api/v1/esia/persons:
+    get:
+      tags: [auth]
+      summary: Учётные записи для демо-окна Госуслуг — без паспортов, СНИЛС закрыт; только APP_MODE=demo
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, properties: { id: { type: string }, full_name: { type: string }, snils: { type: string, example: '112-•••-••• 95' }, company_inn: { type: string }, company_name: { type: string }, role: { type: string } } }
+        '404': { $ref: '#/components/responses/Error' }
   /api/v1/auth/register:
     post:
       tags: [auth]
@@ -328,8 +392,27 @@ components:
             department: { type: string }
             branch: { type: string }
             permissions: { type: array, items: { type: string, enum: [applications.view, audit.view, platform.view] } }
+        identity: { $ref: '#/components/schemas/Identity' }
         created_at: { type: string, format: date-time }
         last_login_at: { type: string, format: date-time }
+    Passport:
+      type: object
+      properties:
+        series: { type: string, example: '4512' }
+        number: { type: string, example: '345678' }
+        issued_at: { type: string, format: date }
+        issued_by: { type: string }
+        division_code: { type: string, example: 770-045 }
+    Identity:
+      type: object
+      description: Личность из Госуслуг (ЕСИА) — после входа через Госуслуги
+      properties:
+        full_name: { type: string }
+        birth_date: { type: string, format: date }
+        snils: { type: string }
+        passport: { $ref: '#/components/schemas/Passport' }
+        source: { type: string }
+        verified_at: { type: string, format: date-time }
     Error:
       type: object
       properties:
@@ -343,10 +426,11 @@ components:
     Status:
       type: string
       description: |
-        Двухуровневая анкета: draft → submitted → data_check → scoring → approved|counter_offer (предварительно, decision.final=false)
-        → full_form (клиент заполняет полную анкету) → verification → approved (decision.final=true) | need_info → signing → issued.
-        Овердрафт (product.express) — одноуровневый: решение по быстрой анкете сразу окончательное.
-      enum: [draft, submitted, data_check, scoring, approved, counter_offer, full_form, verification, need_info, rejected, signing, issued, closed, cancelled]
+        Заявка создаётся после входа через Госуслуги сразу на 2-м уровне: full_form (документы) → submitted → data_check
+        (реестр, БКИ, паспорт, протокол, поручитель) → scoring (полный скоринг) → approved | counter_offer | need_info | rejected
+        (decision.final=true) → signing → issued → closed. need_info → клиент уточняет документы → submitted.
+        draft и verification — статусы заявок прошлой версии (быстрая анкета на сервере).
+      enum: [draft, full_form, submitted, data_check, scoring, approved, counter_offer, verification, need_info, rejected, signing, issued, closed, cancelled]
     Product:
       type: object
       properties:
@@ -363,14 +447,24 @@ components:
         default_payment: { type: integer, description: 'платёж при сумме и сроке по умолчанию (считает сервер)' }
         purposes: { type: array, items: { type: string } }
         badge: { type: string }
-        express: { type: boolean, description: 'одноуровневый продукт: без полной анкеты' }
-    CreateInput:
+    CalcInput:
       type: object
       required: [product_id]
       properties:
         product_id: { type: string, example: business-dev }
         amount: { type: integer, example: 3000000 }
         term_months: { type: integer, example: 24 }
+    Level1:
+      type: object
+      description: Данные 1-го уровня анкеты
+      required: [product_id, amount, term_months, inn, financials]
+      properties:
+        product_id: { type: string, example: business-dev }
+        amount: { type: integer, example: 3000000 }
+        term_months: { type: integer, example: 24 }
+        purpose: { type: string, description: 'по умолчанию — первая цель продукта' }
+        inn: { type: string, example: '7701234567' }
+        financials: { $ref: '#/components/schemas/Financials' }
     CalcResult:
       $ref: '#/components/schemas/Quote'
     Quote:
@@ -414,23 +508,17 @@ components:
     DraftPatch:
       type: object
       properties:
-        product_id: { type: string }
-        amount: { type: integer }
-        term_months: { type: integer }
-        purpose: { type: string }
-        inn: { type: string }
-        financials: { $ref: '#/components/schemas/Financials' }
-        contact: { $ref: '#/components/schemas/Contact' }
-        consent: { type: boolean }
         full_form: { $ref: '#/components/schemas/FullForm' }
-      description: 'До предварительного решения правится быстрая анкета; после — только full_form (иначе 422).'
+      description: 'Условия кредита и данные 1-го уровня уже зафиксированы — правится только 2-й уровень.'
     FullForm:
       type: object
-      description: Полная анкета (уровень 2) — открывается после принятия предварительных условий
+      description: 2-й уровень анкеты — после входа через Госуслуги
       properties:
-        employees: { type: integer, description: 'сотрудников, включая руководителя' }
-        premises: { type: string, enum: [own, rent, none] }
-        purpose_details: { type: string, description: 'на что пойдут деньги, от 20 символов' }
+        director_passport: { $ref: '#/components/schemas/Passport' }
+        protocol:
+          type: object
+          description: 'протокол или решение участников ООО об одобрении крупной сделки — для суммы больше protocol_from; в демо — только имя и размер файла'
+          properties: { name: { type: string, example: 'Протокол ОСУ №3.pdf' }, size: { type: integer } }
         collateral:
           type: object
           properties:
@@ -438,11 +526,11 @@ components:
             value: { type: integer, description: 'оценочная стоимость, ₽' }
             description: { type: string }
         guarantor: { type: object, properties: { full_name: { type: string }, inn: { type: string, description: 'ИНН физлица, 12 цифр' } } }
-        statements_consent: { type: boolean, description: 'согласие на запрос выписок и отчётности' }
+        consent: { type: boolean, description: 'согласие на запрос кредитной истории в БКИ, выписок и отчётности' }
     Check:
       type: object
       properties:
-        code: { type: string, enum: [registry, bki, revenue, scoring, full_form, collateral, guarantor] }
+        code: { type: string, enum: [registry, revenue, esia, bki, passport, protocol, guarantor, scoring, collateral] }
         name: { type: string }
         result: { type: string, enum: [ok, warn, fail] }
         details: { type: string }
@@ -459,7 +547,7 @@ components:
         requested: { $ref: '#/components/schemas/Quote' }
         reasons: { type: array, items: { type: string }, description: 'объяснение простыми словами на данных анкеты' }
         advice: { type: array, items: { type: string }, description: 'что можно сделать (отказ, уточнение)' }
-        final: { type: boolean, description: 'false — предварительное решение по быстрой анкете, дальше полная анкета' }
+        final: { type: boolean, description: 'false — предварительный расчёт 1-го уровня, true — решение полного скоринга' }
     Installment:
       type: object
       properties: { n: { type: integer }, payment: { type: integer }, principal: { type: integer }, interest: { type: integer }, rest: { type: integer } }
@@ -484,8 +572,9 @@ components:
         financials: { $ref: '#/components/schemas/Financials' }
         contact: { $ref: '#/components/schemas/Contact' }
         consent: { type: boolean }
-        level: { type: integer, enum: [1, 2], description: 'уровень анкеты: 1 — быстрая, 2 — полная' }
+        level: { type: integer, enum: [2], description: 'уровень анкеты: заявки создаются на 2-м уровне' }
         full_form: { $ref: '#/components/schemas/FullForm' }
+        identity: { $ref: '#/components/schemas/Identity' }
         preliminary: { $ref: '#/components/schemas/Decision' }
         status: { $ref: '#/components/schemas/Status' }
         bureau:

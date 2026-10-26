@@ -10,7 +10,7 @@ var t0 = time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 
 // Каждый разрешённый переход проходит, всё остальное — ErrInvalidTransition.
 func TestTransitionsExhaustive(t *testing.T) {
-	all := []Status{StatusDraft, StatusSubmitted, StatusDataCheck, StatusScoring, StatusApproved, StatusCounterOffer,
+	all := []Status{StatusDraft, StatusFullForm, StatusSubmitted, StatusDataCheck, StatusScoring, StatusApproved, StatusCounterOffer,
 		StatusNeedInfo, StatusRejected, StatusSigning, StatusIssued, StatusClosed, StatusCancelled}
 	allowed := 0
 	for _, from := range all {
@@ -40,71 +40,88 @@ func TestTransitionsExhaustive(t *testing.T) {
 	}
 }
 
+// Автосохранение — только 2-й уровень и только пока его можно править.
 func TestApplyPatchOnlyInEditableStatuses(t *testing.T) {
-	amt := int64(1_000_000)
-	for _, s := range []Status{StatusSubmitted, StatusApproved, StatusIssued} {
-		a := &Application{Status: s}
-		if err := a.ApplyPatch(DraftPatch{Amount: &amt}, t0); !errors.Is(err, ErrInvalidTransition) {
+	ff := &FullForm{Consent: true}
+	for _, s := range []Status{StatusDraft, StatusSubmitted, StatusApproved, StatusIssued} {
+		a := &Application{Status: s, Level: 2}
+		if err := a.ApplyPatch(DraftPatch{FullForm: ff}, t0); !errors.Is(err, ErrInvalidTransition) {
 			t.Fatalf("patch in %s must be forbidden, got %v", s, err)
 		}
 	}
-	a := &Application{Status: StatusNeedInfo}
-	if err := a.ApplyPatch(DraftPatch{Amount: &amt}, t0); err != nil || a.Amount != amt {
-		t.Fatalf("need_info must be editable: %v", err)
+	for _, s := range []Status{StatusFullForm, StatusNeedInfo} {
+		a := &Application{Status: s, Level: 2}
+		if err := a.ApplyPatch(DraftPatch{FullForm: ff}, t0); err != nil || a.Full == nil || !a.Full.Consent || a.Full.Collateral.Type != CollateralNone {
+			t.Fatalf("%s must be editable: %v %+v", s, err, a.Full)
+		}
 	}
 }
 
 func TestApplyPatchValidation(t *testing.T) {
-	bad := "nope"
-	neg := int64(-1)
-	cases := map[string]DraftPatch{
-		"unknown product":  {ProductID: &bad},
-		"negative amount":  {Amount: &neg},
-		"negative revenue": {Financials: &Financials{AnnualRevenue: -5}},
+	cases := map[string]FullForm{
+		"unknown collateral": {Collateral: Collateral{Type: "yacht", Value: 1}},
+		"negative value":     {Collateral: Collateral{Type: CollateralRealty, Value: -5}},
+		"huge protocol":      {Protocol: &Document{Name: "p.pdf", Size: MaxDocumentSize + 1}},
 	}
-	for name, p := range cases {
-		a := &Application{Status: StatusDraft}
+	for name, f := range cases {
+		a := &Application{Status: StatusFullForm, Level: 2}
 		var ve *ValidationError
-		if err := a.ApplyPatch(p, t0); !errors.As(err, &ve) {
+		if err := a.ApplyPatch(DraftPatch{FullForm: &f}, t0); !errors.As(err, &ve) {
 			t.Fatalf("%s: want ValidationError, got %v", name, err)
 		}
 	}
 }
 
-func validApp() *Application {
-	return &Application{
-		Status: StatusDraft, ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24, INN: "7701234567",
-		Company: &Company{INN: "7701234567"}, Financials: Financials{AnnualRevenue: 80_000_000},
-		Contact: Contact{FullName: "Иванов Иван", Phone: "+79990001122"}, Consent: true,
-	}
+func validLevel1() Level1 {
+	return Level1{ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24, INN: "7701234567",
+		Financials: Financials{AnnualRevenue: 80_000_000}}
 }
 
-func TestValidateForSubmitFields(t *testing.T) {
-	if err := validApp().ValidateForSubmit(); err != nil {
-		t.Fatalf("valid application rejected: %v", err)
+func TestLevel1Validate(t *testing.T) {
+	in := validLevel1()
+	if _, err := in.Validate(); err != nil || in.Purpose != "Развитие бизнеса" {
+		t.Fatalf("valid level 1 rejected or purpose not defaulted: %v %q", err, in.Purpose)
 	}
-	cases := map[string]func(a *Application){
-		"product_id":                func(a *Application) { a.ProductID = "x" },
-		"amount":                    func(a *Application) { a.Amount = 1 },
-		"term_months":               func(a *Application) { a.TermMonths = 999 },
-		"inn":                       func(a *Application) { a.INN = "12ab" },
-		"financials.annual_revenue": func(a *Application) { a.Financials.AnnualRevenue = 0 },
-		"contact.full_name":         func(a *Application) { a.Contact.FullName = "Ив" },
-		"contact.phone":             func(a *Application) { a.Contact.Phone = "123" },
-		"consent":                   func(a *Application) { a.Consent = false },
+	cases := map[string]func(in *Level1){
+		"product_id":                     func(in *Level1) { in.ProductID = "x" },
+		"amount":                         func(in *Level1) { in.Amount = 1 },
+		"term_months":                    func(in *Level1) { in.TermMonths = 999 },
+		"inn":                            func(in *Level1) { in.INN = "12ab" },
+		"financials.annual_revenue":      func(in *Level1) { in.Financials.AnnualRevenue = 0 },
+		"financials.monthly_obligations": func(in *Level1) { in.Financials.MonthlyObligations = -1 },
 	}
 	for field, mutate := range cases {
-		a := validApp()
-		mutate(a)
+		in := validLevel1()
+		mutate(&in)
 		var ve *ValidationError
-		if err := a.ValidateForSubmit(); !errors.As(err, &ve) || ve.Field != field {
+		if _, err := in.Validate(); !errors.As(err, &ve) || ve.Field != field {
 			t.Fatalf("%s: want ValidationError on that field, got %v", field, err)
 		}
 	}
-	a := validApp()
-	a.Company = nil
-	if err := a.ValidateForSubmit(); err == nil {
-		t.Fatal("application without registry company must not be submitted")
+}
+
+func TestPassportValidate(t *testing.T) {
+	ok := Passport{Series: "4512", Number: "345678", IssuedAt: "2016-05-24", IssuedBy: "ГУ МВД России", DivisionCode: "770-045"}
+	if err := ok.Validate("p", t0); err != nil {
+		t.Fatalf("valid passport rejected: %v", err)
+	}
+	if ok.Masked() != "45 12 ••••78" {
+		t.Fatalf("masked: %q", ok.Masked())
+	}
+	cases := map[string]func(p *Passport){
+		"p.series":        func(p *Passport) { p.Series = "45" },
+		"p.number":        func(p *Passport) { p.Number = "34567x" },
+		"p.issued_at":     func(p *Passport) { p.IssuedAt = "2030-01-01" },
+		"p.division_code": func(p *Passport) { p.DivisionCode = "77-45" },
+		"p.issued_by":     func(p *Passport) { p.IssuedBy = "" },
+	}
+	for field, mutate := range cases {
+		p := ok
+		mutate(&p)
+		var ve *ValidationError
+		if err := p.Validate("p", t0); !errors.As(err, &ve) || ve.Field != field {
+			t.Fatalf("%s: want ValidationError on that field, got %v", field, err)
+		}
 	}
 }
 
@@ -184,8 +201,12 @@ func TestCalculateLimits(t *testing.T) {
 	}
 }
 
+func issuedApp() *Application {
+	return &Application{Status: StatusFullForm, ProductID: "business-dev", Amount: 3_000_000, TermMonths: 24, INN: "7701234567"}
+}
+
 func TestNextPaymentAndEnrich(t *testing.T) {
-	a := validApp()
+	a := issuedApp()
 	a.Status = StatusIssued
 	a.Decision = &Decision{Rate: 18.9}
 	a.Enrich()
@@ -198,10 +219,10 @@ func TestNextPaymentAndEnrich(t *testing.T) {
 	if a.NextPaymentAmount() != 0 {
 		t.Fatal("no payment after the last one")
 	}
-	d := validApp()
+	d := issuedApp()
 	d.Enrich()
 	if d.Schedule != nil || d.NextPayment != 0 {
-		t.Fatal("draft must not have a schedule")
+		t.Fatal("application before issue must not have a schedule")
 	}
 }
 

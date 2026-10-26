@@ -1,21 +1,31 @@
-// Полная анкета (уровень 2): открывается после того, как клиент принял предварительные условия.
-// Три блока — о бизнесе, обеспечение, согласие на выписки — и сводка справа с предварительными условиями.
-// Сумма и срок уже согласованы и здесь не меняются. Правила залога (дисконты, порог) — с сервера.
+// 2-й уровень анкеты: открывается после входа через Госуслуги. Личность уже подтверждена; клиент прикладывает
+// паспорт руководителя (ООО), протокол об одобрении крупной сделки (ООО, больше 25 млн ₽), обеспечение
+// (обязательно больше 5 млн ₽) и даёт согласие на запрос в БКИ. Дальше — полный скоринг и окончательное решение.
+// Всё сохраняется автоматически (features/autosave.js).
 import { api } from '../core/api.js';
 import { $, $$, on } from '../core/dom.js';
-import { esc, fmt, rub, months, rate, digits } from '../core/format.js';
+import { esc, fmt, rub, months, rate, digits, date } from '../core/format.js';
 import { navigate } from '../core/router.js';
 import { product, putApp } from '../core/session.js';
 import { icon } from '../ui/icons.js';
 import { createAutosave } from '../features/autosave.js';
-import { levels } from './application-form.js';
-import { backLink, pageHead, paintProgress, showFieldError } from './parts.js';
+import { backLink, pageHead, paintProgress, showFieldError, levels, maskPassport } from './parts.js';
 
-let RULES = null; // { required_from, kinds: [{type, name, discount}], premises: [{type, name}] }
+let RULES = null; // { required_from, protocol_from, kinds: [{type, name, discount}] }
 const rules = async () => (RULES ??= await api('GET', '/security-rules'));
 
 const kindOf = (type) => RULES.kinds.find((k) => k.type === type);
 const liquid = (c) => (kindOf(c.type) && c.value > 0 ? Math.floor(c.value * kindOf(c.type).discount) : 0);
+const isLLC = (a) => a.company?.type !== 'ИП';
+const needsProtocol = (a) => isLLC(a) && a.amount > RULES.protocol_from;
+
+const passportDone = (p) =>
+  !!p &&
+  /^\d{4}$/.test(p.series) &&
+  /^\d{6}$/.test(p.number) &&
+  !!p.issued_at &&
+  /^\d{6}$/.test(digits(p.division_code)) &&
+  (p.issued_by || '').trim().length >= 5;
 
 /** Обеспечение достаточно для отправки: до порога — не нужно; выше — залог или поручитель. */
 const securityDone = (a, f) => {
@@ -24,13 +34,14 @@ const securityDone = (a, f) => {
   return a.amount <= RULES.required_from || f.collateral.type !== 'none' || !!f.guarantor;
 };
 
-const checklist = (a, f) => [
-  ['Сотрудники', f.employees > 0],
-  ['Где работает бизнес', !!f.premises],
-  ['На что пойдут деньги', f.purpose_details.trim().length >= 20],
-  [a.amount > RULES.required_from ? 'Залог или поручитель' : 'Обеспечение (по желанию)', securityDone(a, f)],
-  ['Согласие на выписки и отчётность', f.statements_consent],
-];
+/** Пункты готовности: [ключ блока, пункт, выполнен]. */
+const checklist = (a, f) =>
+  [
+    isLLC(a) && ['passport', 'Паспорт руководителя', passportDone(f.director_passport)],
+    needsProtocol(a) && ['protocol', 'Протокол о крупной сделке', !!f.protocol?.name],
+    ['security', a.amount > RULES.required_from ? 'Залог или поручитель' : 'Обеспечение (по желанию)', securityDone(a, f)],
+    ['consent', 'Согласие на запрос в БКИ', !!f.consent],
+  ].filter(Boolean);
 
 function securityHint(a) {
   const from = rub(RULES.required_from);
@@ -50,44 +61,89 @@ function collateralInfo(a, c) {
   }`;
 }
 
+const fileSize = (n) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1).replace('.', ',')} МБ` : `${Math.max(1, Math.round(n / 1024))} КБ`);
+
 function layout(a, p) {
   const f = a.full_form;
-  const pre = a.preliminary || a.decision;
+  const pre = a.preliminary || {};
+  const id = a.identity;
   const need = a.status === 'need_info' ? a.decision : null;
   const g = f.guarantor;
+  const dp = f.director_passport || {};
+  const fromESIA = id && a.company?.director && id.full_name.toLowerCase() === a.company.director.toLowerCase();
+  let n = 0;
+  const sec = (key, title, text, body, extra = '') =>
+    `<section class="card fsec ${extra}" data-key="${key}"><div class="fsec__head"><span class="fsec__n">${++n}</span><div><h2>${title}</h2><p>${text}</p></div></div>${body}</section>`;
   return `<div class="container">
     ${backLink('/cabinet/applications', 'Все заявки')}
-    ${pageHead(`Полная анкета · ${p.name}`, `Заявка ${esc(a.number)} · предварительно одобрено ${rub(a.amount)} на ${months(a.term_months)}`)}
-    ${levels(p, 2)}
+    ${pageHead(`Документы · ${p.name}`, `Заявка ${esc(a.number)} · предварительно ${pre.type === 'counter_offer' ? 'одобрено на других условиях' : 'одобрено'}: ${rub(a.amount)} на ${months(a.term_months)}`)}
+    ${levels(2)}
     ${
       need
         ? `<div class="notice notice--action notice--block"><span class="notice__ic">${icon('alert', 20)}</span>
-      <div class="notice__txt"><small>Нужно уточнение</small><b>Уточните обеспечение и отправьте снова</b>${(need.reasons || []).map((r) => `<span>${esc(r)}</span>`).join('')}${(need.advice || []).map((r) => `<span>${esc(r)}</span>`).join('')}</div></div>`
+      <div class="notice__txt"><small>Нужно уточнение</small><b>Исправьте данные и отправьте снова</b>${(need.reasons || []).map((r) => `<span>${esc(r)}</span>`).join('')}${(need.advice || []).map((r) => `<span>${esc(r)}</span>`).join('')}</div></div>`
         : ''
     }
     <div class="form-layout">
       <div class="stack-l">
-        <section class="card fsec" data-sec="0">
-          <div class="fsec__head"><span class="fsec__n">1</span><div><h2>О бизнесе</h2><p>Чтобы окончательно оценить, как бизнес справится с кредитом</p></div></div>
-          <div class="fields">
-            <div class="field" data-field="full_form.employees"><label for="ff-employees">Сотрудников, включая руководителя</label>
-              <input class="input" id="ff-employees" inputmode="numeric" value="${f.employees || ''}" placeholder="например, 12"></div>
-            <div class="field field--wide" data-field="full_form.premises"><span class="field__label" id="ff-premises-l">Где работает бизнес</span>
-              <div class="chips" role="radiogroup" aria-labelledby="ff-premises-l">${RULES.premises
-                .map(
-                  (x) =>
-                    `<button type="button" class="chip ${f.premises === x.type ? 'is-on' : ''}" data-premises="${x.type}" role="radio" aria-checked="${f.premises === x.type}">${esc(x.name)}</button>`,
-                )
-                .join('')}</div></div>
-            <div class="field field--wide" data-field="full_form.purpose_details"><label for="ff-purpose">На что пойдут деньги</label>
-              <textarea class="input textarea" id="ff-purpose" rows="3" placeholder="${esc(a.purpose)}: например, ремонт второго зала и закупка мебели">${esc(f.purpose_details)}</textarea>
-              <span class="field__hint">Пара предложений своими словами — для кредитного аналитика</span></div>
-          </div>
-        </section>
+        ${sec(
+          'identity',
+          'Личность подтверждена через Госуслуги',
+          'Эти данные банк получил из ЕСИА — вводить их не нужно',
+          id
+            ? `<dl class="kv identity">
+            <div><dt>ФИО</dt><dd>${esc(id.full_name)}</dd></div>
+            <div><dt>Дата рождения</dt><dd>${id.birth_date ? date(id.birth_date) : '—'}</dd></div>
+            <div><dt>Паспорт</dt><dd>${maskPassport(id.passport)}</dd></div>
+            <div><dt>СНИЛС</dt><dd>${esc((id.snils || '').replace(/^(\d{3})-\d{3}-\d{3}/, '$1-•••-•••'))}</dd></div>
+          </dl><p class="note">${icon('lock', 20)}<span>${esc(id.source || 'Госуслуги')} · ${a.company ? `руководитель ${esc(a.company.name)} по ЕГРЮЛ` : ''}</span></p>`
+            : '<p class="text-bad">Личность не подтверждена — войдите через Госуслуги заново.</p>',
+          'is-done',
+        )}
 
-        <section class="card fsec" data-sec="1">
-          <div class="fsec__head"><span class="fsec__n">2</span><div><h2>Обеспечение</h2><p>${esc(securityHint(a))}</p></div></div>
-          <div class="fields">
+        ${
+          isLLC(a)
+            ? sec(
+                'passport',
+                'Паспорт руководителя',
+                fromESIA
+                  ? 'Руководитель по ЕГРЮЛ — вы: паспорт подставили из Госуслуг, проверьте'
+                  : `Руководитель по ЕГРЮЛ — ${esc(a.company?.director || '')}: укажите его паспорт`,
+                `<div class="fields" data-passport>
+            <div class="field" data-field="full_form.director_passport.series"><label for="ff-p-series">Серия</label>
+              <input class="input" id="ff-p-series" data-pass="series" inputmode="numeric" maxlength="4" value="${esc(dp.series || '')}" placeholder="0000"></div>
+            <div class="field" data-field="full_form.director_passport.number"><label for="ff-p-number">Номер</label>
+              <input class="input" id="ff-p-number" data-pass="number" inputmode="numeric" maxlength="6" value="${esc(dp.number || '')}" placeholder="000000"></div>
+            <div class="field" data-field="full_form.director_passport.issued_at"><label for="ff-p-issued">Дата выдачи</label>
+              <input class="input" id="ff-p-issued" data-pass="issued_at" type="date" value="${esc(dp.issued_at || '')}"></div>
+            <div class="field" data-field="full_form.director_passport.division_code"><label for="ff-p-code">Код подразделения</label>
+              <input class="input" id="ff-p-code" data-pass="division_code" inputmode="numeric" maxlength="7" value="${esc(dp.division_code || '')}" placeholder="000-000"></div>
+            <div class="field field--wide" data-field="full_form.director_passport.issued_by"><label for="ff-p-by">Кем выдан</label>
+              <input class="input" id="ff-p-by" data-pass="issued_by" value="${esc(dp.issued_by || '')}"></div>
+          </div>`,
+              )
+            : ''
+        }
+
+        ${
+          needsProtocol(a)
+            ? sec(
+                'protocol',
+                'Решение об одобрении крупной сделки',
+                `Кредит больше ${rub(RULES.protocol_from)} для ООО — крупная сделка: нужен протокол или решение участников`,
+                `<div class="field" data-field="full_form.protocol">
+            <input class="sr-only" id="ff-protocol" type="file" accept=".pdf,.jpg,.jpeg,.png">
+            <label class="file" for="ff-protocol">${icon('doc', 20)}<span id="ff-protocol-name">${f.protocol?.name ? `${esc(f.protocol.name)} · ${fileSize(f.protocol.size)}` : 'Выбрать файл: PDF, JPG или PNG до 20 МБ'}</span></label>
+            <span class="field__hint">Демо: файл остаётся на вашем устройстве, банк сохраняет только имя и размер.</span></div>`,
+              )
+            : ''
+        }
+
+        ${sec(
+          'security',
+          'Обеспечение',
+          esc(securityHint(a)),
+          `<div class="fields">
             <div class="field field--wide" data-field="full_form.collateral.type"><span class="field__label" id="ff-coll-l">Залог</span>
               <div class="chips" role="radiogroup" aria-labelledby="ff-coll-l">
                 ${[{ type: 'none', name: 'Без залога' }, ...RULES.kinds]
@@ -109,14 +165,16 @@ function layout(a, p) {
               <input class="input" id="ff-g-name" value="${esc(g?.full_name || '')}" autocomplete="off"></div>
             <div class="field ${g ? '' : 'is-hidden'}" data-field="full_form.guarantor.inn" id="ff-g-inn-box"><label for="ff-g-inn">ИНН поручителя</label>
               <input class="input" id="ff-g-inn" inputmode="numeric" maxlength="12" value="${esc(g?.inn || '')}" placeholder="12 цифр"></div>
-          </div>
-        </section>
+          </div>`,
+        )}
 
-        <section class="card fsec" data-sec="2">
-          <div class="fsec__head"><span class="fsec__n">3</span><div><h2>Согласие</h2><p>Выписки и отчётность банк запросит сам — загружать ничего не нужно</p></div></div>
-          <label class="check" data-field="full_form.statements_consent"><input type="checkbox" id="ff-consent" ${f.statements_consent ? 'checked' : ''}>
-            <span>Согласен на запрос выписок по счетам в других банках и бухгалтерской отчётности в ФНС${f.guarantor ? ', а также кредитной истории поручителя в БКИ' : ''}</span></label>
-        </section>
+        ${sec(
+          'consent',
+          'Согласие',
+          'Кредитную историю, выписки и отчётность банк запросит сам — загружать ничего не нужно',
+          `<label class="check" data-field="full_form.consent"><input type="checkbox" id="ff-consent" ${f.consent ? 'checked' : ''}>
+            <span>Согласен на запрос кредитной истории компании${g ? ' и поручителя' : ''} в бюро кредитных историй, выписок по счетам в других банках и бухгалтерской отчётности в ФНС</span></label>`,
+        )}
       </div>
 
       <aside class="form-aside">
@@ -125,14 +183,14 @@ function layout(a, p) {
           <dl class="kv">
             <div><dt>Сумма</dt><dd>${rub(a.amount)}</dd></div>
             <div><dt>Срок</dt><dd>${months(a.term_months)}</dd></div>
-            <div><dt>Ставка</dt><dd>${rate(pre.rate)}</dd></div>
+            <div><dt>Ставка</dt><dd>${pre.rate ? rate(pre.rate) : '—'}</dd></div>
             <div><dt>Переплата</dt><dd>${rub(pre.overpayment)}</dd></div>
           </dl>
           <div class="bar"><i id="sum-progress"></i></div>
           <div class="row row--between small"><span id="sum-pct"></span><span class="save-state" id="save-state" aria-live="polite">Сохранено</span></div>
           <ul class="todo-list" id="sum-todo"></ul>
-          <button class="btn btn--primary btn--block" id="submit">Отправить на решение</button>
-          <p class="calc__note">Условия предварительные. Окончательное решение — примерно через 15 секунд после отправки</p>
+          <button class="btn btn--primary btn--block" id="submit">Отправить на полный скоринг</button>
+          <p class="calc__note">Условия предварительные — без кредитной истории. Окончательное решение — примерно через 15 секунд после отправки</p>
         </section>
       </aside>
     </div>
@@ -147,7 +205,6 @@ export default async function applicationFull(root, a, { signal }) {
   const f = a.full_form;
   f.collateral ??= { type: 'none', value: 0, description: '' };
   f.collateral.type ||= 'none';
-  f.purpose_details ??= '';
   root.innerHTML = layout(a, p);
 
   const autosave = createAutosave({ id, root, signal, onSettled: () => refresh() });
@@ -155,9 +212,12 @@ export default async function applicationFull(root, a, { signal }) {
 
   const refresh = () => {
     const list = checklist(a, f);
-    $('#submit', root).disabled = paintProgress(root, list) < list.length;
-    const sections = [list[0][1] && list[1][1] && list[2][1], list[3][1], list[4][1]];
-    $$('.fsec', root).forEach((s, i) => s.classList.toggle('is-done', sections[i]));
+    $('#submit', root).disabled =
+      paintProgress(
+        root,
+        list.map(([, title, ok]) => [title, ok]),
+      ) < list.length;
+    for (const [key, , ok] of list) $(`[data-key="${key}"]`, root)?.classList.toggle('is-done', ok);
     $('#ff-coll-info', root).innerHTML = collateralInfo(a, f.collateral);
   };
   refresh();
@@ -173,10 +233,15 @@ export default async function applicationFull(root, a, { signal }) {
   on(
     root,
     'input',
-    '#ff-employees',
+    '[data-pass]',
     (_, el) => {
-      f.employees = +digits(el.value) || 0;
-      el.value = f.employees || '';
+      const key = el.dataset.pass;
+      if (key === 'series' || key === 'number') el.value = digits(el.value);
+      if (key === 'division_code') {
+        const v = digits(el.value).slice(0, 6);
+        el.value = v.length > 3 ? `${v.slice(0, 3)}-${v.slice(3)}` : v;
+      }
+      f.director_passport = { ...(f.director_passport || {}), [key]: el.value };
       save();
       refresh();
     },
@@ -184,22 +249,13 @@ export default async function applicationFull(root, a, { signal }) {
   );
   on(
     root,
-    'click',
-    '[data-premises]',
+    'change',
+    '#ff-protocol',
     (_, el) => {
-      f.premises = el.dataset.premises;
-      radio('data-premises', f.premises);
-      save();
-      refresh();
-    },
-    signal,
-  );
-  on(
-    root,
-    'input',
-    '#ff-purpose',
-    (_, el) => {
-      f.purpose_details = el.value;
+      const file = el.files?.[0];
+      if (!file) return;
+      f.protocol = { name: file.name, size: file.size };
+      $('#ff-protocol-name', root).textContent = `${file.name} · ${fileSize(file.size)}`;
       save();
       refresh();
     },
@@ -271,7 +327,7 @@ export default async function applicationFull(root, a, { signal }) {
     'change',
     '#ff-consent',
     (_, el) => {
-      f.statements_consent = el.checked;
+      f.consent = el.checked;
       save();
       refresh();
     },
@@ -293,7 +349,7 @@ export default async function applicationFull(root, a, { signal }) {
       } catch (e) {
         showFieldError(root, e);
         btn.disabled = false;
-        btn.textContent = 'Отправить на решение';
+        btn.textContent = 'Отправить на полный скоринг';
       }
     },
     signal,
