@@ -196,7 +196,7 @@ func run(log *slog.Logger, addr string) error {
 
 	svc := &service.Service{Repo: repo, Users: users, Registry: registry, Now: time.Now, Tx: tx, Audit: auditor}
 	authSvc := &service.AuthService{
-		Users: users, Registry: registry, Now: time.Now, Audit: auditor,
+		Users: users, Registry: registry, ESIA: integrations.MockESIA{}, Now: time.Now, Audit: auditor,
 		Sessions: sessions, Limiter: auth.NewLimiter(5, time.Minute),
 	}
 	if env("SEED_DEMO", "true") == "true" && runHTTP {
@@ -299,7 +299,7 @@ func run(log *slog.Logger, addr string) error {
 	// ---------- HTTP API ----------
 	api := &httpapi.Server{
 		Svc: svc, Auth: authSvc, CookieSecure: sec.CookieSecure, Repo: repo, Log: log,
-		Static: web.Static(), Version: version, BankToken: sec.BankToken,
+		Static: web.Static(), Version: version, BankToken: sec.BankToken, DemoESIA: sec.Mode == modeDemo,
 		Idem: idem, Limiter: httpapi.NewRateLimiter(rateRPS, rateBurst),
 		// для API шина некритична: при недоступной Kafka заявки принимаются, события ждут в outbox
 		RequestTimeout: reqTimeout, Degradable: ready,

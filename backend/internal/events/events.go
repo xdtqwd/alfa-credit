@@ -48,18 +48,16 @@ type Event struct {
 // ApplicationPayload — полезная нагрузка событий заявки. Персональных данных нет:
 // только идентификаторы, статусы и суммы (минимизация ПДн в шине).
 type ApplicationPayload struct {
-	ApplicationID string `json:"application_id"`
-	Number        string `json:"number"`
-	ClientID      string `json:"client_id"`
-	ProductID     string `json:"product_id"`
-	Amount        int64  `json:"amount"`
-	TermMonths    int    `json:"term_months"`
-	From          string `json:"from,omitempty"`
-	To            string `json:"to"`
-	Score         *int   `json:"score,omitempty"`
-	Decision      string `json:"decision,omitempty"`
-	// Preliminary — решение предварительное (по быстрой анкете), дальше клиент заполняет полную анкету.
-	Preliminary   bool      `json:"preliminary,omitempty"`
+	ApplicationID string    `json:"application_id"`
+	Number        string    `json:"number"`
+	ClientID      string    `json:"client_id"`
+	ProductID     string    `json:"product_id"`
+	Amount        int64     `json:"amount"`
+	TermMonths    int       `json:"term_months"`
+	From          string    `json:"from,omitempty"`
+	To            string    `json:"to"`
+	Score         *int      `json:"score,omitempty"`
+	Decision      string    `json:"decision,omitempty"`
 	PaymentN      int       `json:"payment_n,omitempty"`
 	PaymentAmount int64     `json:"payment_amount,omitempty"`
 	StatusAt      time.Time `json:"status_at"`
@@ -95,7 +93,6 @@ func FromChange(before, after *domain.Application, rid string) []Event {
 		To: string(after.Status), Score: after.Score, StatusAt: after.StatusChangedAt}
 	if after.Decision != nil {
 		base.Decision = string(after.Decision.Type)
-		base.Preliminary = !after.Decision.Final
 	}
 	var out []Event
 	mk := func(typ string, p ApplicationPayload, at time.Time) {

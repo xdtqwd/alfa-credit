@@ -26,16 +26,10 @@ type Service struct {
 var texts = map[domain.Status]string{
 	domain.StatusApproved:     "Кредит одобрен — примите условия и подпишите договор в кабинете",
 	domain.StatusCounterOffer: "Банк предлагает другие условия — посмотрите в кабинете",
-	domain.StatusNeedInfo:     "Нужно уточнить данные анкеты",
+	domain.StatusNeedInfo:     "Нужно уточнить документы или обеспечение",
 	domain.StatusRejected:     "Решение по заявке готово — подробности в кабинете",
 	domain.StatusIssued:       "Деньги зачислены на расчётный счёт",
 	domain.StatusClosed:       "Кредит полностью погашен",
-}
-
-// Предварительное решение (по быстрой анкете): впереди полная анкета, а не подписание.
-var preliminaryTexts = map[domain.Status]string{
-	domain.StatusApproved:     "Кредит предварительно одобрен — заполните полную анкету в кабинете",
-	domain.StatusCounterOffer: "Банк предварительно предлагает другие условия — посмотрите в кабинете",
 }
 
 func (s *Service) Handle(ctx context.Context, e events.Event) error {
@@ -47,9 +41,6 @@ func (s *Service) Handle(ctx context.Context, e events.Event) error {
 	switch e.Type {
 	case events.TypeStatusChanged:
 		text, channel = texts[domain.Status(p.To)], "push"
-		if t, ok := preliminaryTexts[domain.Status(p.To)]; ok && p.Preliminary {
-			text = t
-		}
 	case events.TypePaymentMade:
 		text, channel = "Платёж по кредиту получен", "push"
 	}

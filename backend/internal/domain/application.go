@@ -5,6 +5,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 )
@@ -27,15 +28,14 @@ func (e *ValidationError) Error() string { return e.Field + ": " + e.Message }
 type Status string
 
 const (
-	StatusDraft        Status = "draft"         // анкета заполняется клиентом
-	StatusSubmitted    Status = "submitted"     // отправлена, ждёт обработки
-	StatusDataCheck    Status = "data_check"    // проверка данных: ЕГРЮЛ/ЕГРИП, БКИ, сверка выручки
-	StatusScoring      Status = "scoring"       // оценка риска и кредитное решение
-	StatusApproved     Status = "approved"      // одобрено на запрошенных условиях (предварительно или окончательно — Decision.Final)
-	StatusCounterOffer Status = "counter_offer" // одобрено на иных условиях (предварительно)
-	StatusFullForm     Status = "full_form"     // предварительные условия приняты, клиент заполняет полную анкету
-	StatusVerification Status = "verification"  // банк проверяет полную анкету и обеспечение → окончательное решение
-	StatusNeedInfo     Status = "need_info"     // нужно уточнить данные
+	StatusDraft        Status = "draft"         // черновик быстрой анкеты прошлой версии: теперь 1-й уровень живёт без заявки
+	StatusFullForm     Status = "full_form"     // вход через Госуслуги выполнен, клиент прикладывает документы (2-й уровень)
+	StatusSubmitted    Status = "submitted"     // 2-й уровень отправлен, ждёт обработки
+	StatusDataCheck    Status = "data_check"    // проверка данных: ЕГРЮЛ/ЕГРИП, БКИ, паспорт, протокол, поручитель
+	StatusScoring      Status = "scoring"       // полный скоринг и окончательное решение
+	StatusApproved     Status = "approved"      // одобрено на запрошенных условиях
+	StatusCounterOffer Status = "counter_offer" // одобрено на иных условиях
+	StatusNeedInfo     Status = "need_info"     // нужно уточнить документы или обеспечение
 	StatusRejected     Status = "rejected"      // отказ
 	StatusSigning      Status = "signing"       // клиент принял условия, подписание документов
 	StatusIssued       Status = "issued"        // средства выданы (симуляция)
@@ -44,15 +44,14 @@ const (
 )
 
 var transitions = map[Status][]Status{
-	StatusDraft:        {StatusSubmitted, StatusCancelled},
+	StatusDraft:        {StatusCancelled},
+	StatusFullForm:     {StatusSubmitted, StatusCancelled},
 	StatusSubmitted:    {StatusDataCheck, StatusCancelled},
 	StatusDataCheck:    {StatusScoring, StatusNeedInfo, StatusRejected},
 	StatusScoring:      {StatusApproved, StatusCounterOffer, StatusNeedInfo, StatusRejected},
-	StatusApproved:     {StatusFullForm, StatusSigning, StatusCancelled},
-	StatusCounterOffer: {StatusFullForm, StatusSigning, StatusCancelled},
-	StatusFullForm:     {StatusVerification, StatusCancelled},
-	StatusVerification: {StatusApproved, StatusNeedInfo},
-	StatusNeedInfo:     {StatusSubmitted, StatusVerification, StatusCancelled},
+	StatusApproved:     {StatusSigning, StatusCancelled},
+	StatusCounterOffer: {StatusSigning, StatusCancelled},
+	StatusNeedInfo:     {StatusSubmitted, StatusCancelled},
 	StatusSigning:      {StatusIssued, StatusCancelled},
 	StatusIssued:       {StatusClosed},
 }
@@ -73,7 +72,7 @@ func CanTransition(from, to Status) bool {
 
 // InPipeline — заявка обрабатывается банком автоматически.
 func (s Status) InPipeline() bool {
-	return s == StatusSubmitted || s == StatusDataCheck || s == StatusScoring || s == StatusVerification
+	return s == StatusSubmitted || s == StatusDataCheck || s == StatusScoring
 }
 
 type Company struct {
@@ -142,7 +141,7 @@ type Decision struct {
 	Reasons []string `json:"reasons"`
 	// Advice — что можно сделать дальше (для отказа и уточнения).
 	Advice []string `json:"advice,omitempty"`
-	// Final — окончательное решение. false — предварительное (по быстрой анкете), дальше полная анкета.
+	// Final — окончательное решение (полный скоринг). false — предварительный расчёт 1-го уровня.
 	Final bool `json:"final"`
 }
 
@@ -179,10 +178,12 @@ type Application struct {
 	Financials Financials `json:"financials"`
 	Contact    Contact    `json:"contact"`
 	Consent    bool       `json:"consent"`
-	// Level — уровень анкеты: 1 — быстрая (0 у заявок, созданных до двух уровней), 2 — полная.
+	// Level — уровень анкеты: 2 у заявок новой схемы (заявка создаётся после входа через Госуслуги).
 	Level int       `json:"level"`
 	Full  *FullForm `json:"full_form,omitempty"`
-	// Preliminary — предварительное решение, которое клиент принял перед полной анкетой.
+	// Identity — личность заявителя из Госуслуг (ЕСИА) на момент подачи.
+	Identity *Identity `json:"identity,omitempty"`
+	// Preliminary — предварительное решение 1-го уровня (упрощённый скоринг без кредитной истории).
 	Preliminary *Decision     `json:"preliminary,omitempty"`
 	Status      Status        `json:"status"`
 	Bureau      *BureauReport `json:"bureau,omitempty"`
@@ -239,107 +240,58 @@ func (a *Application) Enrich() *Application {
 	return a
 }
 
-// DraftPatch — частичное обновление анкеты (автосохранение каждого поля).
+// DraftPatch — автосохранение 2-го уровня анкеты: условия кредита и данные 1-го уровня уже зафиксированы.
 type DraftPatch struct {
-	ProductID  *string     `json:"product_id"`
-	Amount     *int64      `json:"amount"`
-	TermMonths *int        `json:"term_months"`
-	Purpose    *string     `json:"purpose"`
-	INN        *string     `json:"inn"`
-	Financials *Financials `json:"financials"`
-	Contact    *Contact    `json:"contact"`
-	Consent    *bool       `json:"consent"`
-	FullForm   *FullForm   `json:"full_form"` // уровень 2 — только он и правится после предварительного решения
+	FullForm *FullForm `json:"full_form"`
 }
 
 func (a *Application) ApplyPatch(p DraftPatch, now time.Time) error {
-	if a.EditableFull() {
-		// условия уже предварительно согласованы: на втором уровне меняется только полная анкета
-		if p.ProductID != nil || p.Amount != nil || p.TermMonths != nil || p.Purpose != nil || p.INN != nil ||
-			p.Financials != nil || p.Contact != nil || p.Consent != nil {
-			return &ValidationError{"full_form", "сумма, срок и быстрая анкета уже согласованы — меняется только полная анкета"}
-		}
-		if p.FullForm != nil {
-			f := *p.FullForm
-			if err := validFullForm(&f); err != nil {
-				return err
-			}
-			a.Full = &f
-		}
-		a.UpdatedAt = now
-		return nil
-	}
-	if !a.EditableQuick() || p.FullForm != nil {
+	if !a.EditableFull() {
 		return ErrInvalidTransition
 	}
-	if p.ProductID != nil {
-		if _, ok := FindProduct(*p.ProductID); !ok {
-			return &ValidationError{"product_id", "неизвестный продукт"}
+	if p.FullForm != nil {
+		f := *p.FullForm
+		if err := validFullForm(&f); err != nil {
+			return err
 		}
-		a.ProductID = *p.ProductID
-	}
-	if p.Amount != nil {
-		if *p.Amount < 0 {
-			return &ValidationError{"amount", "сумма не может быть отрицательной"}
-		}
-		a.Amount = *p.Amount
-	}
-	if p.TermMonths != nil {
-		a.TermMonths = *p.TermMonths
-	}
-	if p.Purpose != nil {
-		a.Purpose = *p.Purpose
-	}
-	if p.INN != nil {
-		a.INN = *p.INN
-	}
-	if p.Financials != nil {
-		if p.Financials.AnnualRevenue < 0 || p.Financials.MonthlyObligations < 0 || p.Financials.Employees < 0 {
-			return &ValidationError{"financials", "значения не могут быть отрицательными"}
-		}
-		a.Financials = *p.Financials
-	}
-	if p.Contact != nil {
-		a.Contact = *p.Contact
-	}
-	if p.Consent != nil {
-		a.Consent = *p.Consent
+		a.Full = &f
 	}
 	a.UpdatedAt = now
 	return nil
 }
 
-// ValidateForSubmit — проверка полноты анкеты перед отправкой в конвейер.
-func (a *Application) ValidateForSubmit() error {
-	p, ok := FindProduct(a.ProductID)
-	if !ok {
-		return &ValidationError{"product_id", "выберите продукт"}
+// Level1 — данные 1-го уровня: по ним считается предварительный расчёт (без входа),
+// а после входа через Госуслуги создаётся заявка.
+type Level1 struct {
+	ProductID  string     `json:"product_id"`
+	Amount     int64      `json:"amount"`
+	TermMonths int        `json:"term_months"`
+	Purpose    string     `json:"purpose"`
+	INN        string     `json:"inn"`
+	Financials Financials `json:"financials"`
+}
+
+// Validate проверяет 1-й уровень и подставляет цель по умолчанию.
+func (in *Level1) Validate() (Product, error) {
+	p, ok := FindProduct(in.ProductID)
+	switch {
+	case !ok:
+		return p, &ValidationError{"product_id", "выберите кредит"}
+	case in.Amount < p.MinAmount || in.Amount > p.MaxAmount:
+		return p, &ValidationError{"amount", fmt.Sprintf("сумма — от %s до %s", Money(p.MinAmount), Money(p.MaxAmount))}
+	case in.TermMonths < p.MinTerm || in.TermMonths > p.MaxTerm:
+		return p, &ValidationError{"term_months", "срок вне диапазона продукта"}
+	case !ValidINN(in.INN):
+		return p, &ValidationError{"inn", "ИНН должен содержать 10 или 12 цифр"}
+	case in.Financials.AnnualRevenue <= 0:
+		return p, &ValidationError{"financials.annual_revenue", "укажите выручку за год"}
+	case in.Financials.MonthlyObligations < 0:
+		return p, &ValidationError{"financials.monthly_obligations", "платежи не могут быть отрицательными"}
 	}
-	if a.Amount < p.MinAmount || a.Amount > p.MaxAmount {
-		return &ValidationError{"amount", "сумма вне диапазона продукта"}
+	if in.Purpose == "" || !slices.Contains(p.Purposes, in.Purpose) {
+		in.Purpose = p.Purposes[0]
 	}
-	if a.TermMonths < p.MinTerm || a.TermMonths > p.MaxTerm {
-		return &ValidationError{"term_months", "срок вне диапазона продукта"}
-	}
-	if !ValidINN(a.INN) {
-		return &ValidationError{"inn", "ИНН должен содержать 10 или 12 цифр"}
-	}
-	if a.Company == nil {
-		return &ValidationError{"inn", "компания не найдена в реестре"}
-	}
-	if a.Financials.AnnualRevenue <= 0 {
-		return &ValidationError{"financials.annual_revenue", "укажите выручку за год"}
-	}
-	if len([]rune(a.Contact.FullName)) < 5 {
-		return &ValidationError{"contact.full_name", "укажите ФИО"}
-	}
-	if len(a.Contact.Phone) < 10 {
-		return &ValidationError{"contact.phone", "укажите телефон"}
-	}
-	if !a.Consent {
-		return &ValidationError{"consent", "нужно согласие на обработку данных и запрос в БКИ"}
-	}
-	return nil
+	return p, nil
 }
 
 func ValidINN(inn string) bool {

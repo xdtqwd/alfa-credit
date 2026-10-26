@@ -22,7 +22,7 @@ import (
 // issued — выданный кредит у клиента (минуя конвейер).
 func (h *harness) issued(c *http.Client) string {
 	h.t.Helper()
-	_, b := h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "working-capital", "amount": 300_000, "term_months": 3}, nil)
+	_, b := h.do(c, "POST", "/api/v1/applications", level1("working-capital", 300_000, 3), nil)
 	var a domain.Application
 	_ = json.Unmarshal(b, &a)
 	_, _ = h.repo.Update(h.t.Context(), a.ID, func(x *domain.Application) error {
@@ -79,8 +79,8 @@ func TestIdempotencyKeysAreScopedPerClient(t *testing.T) {
 	h := newHarness(t, withIdem)
 	a, b := h.login("79000000001"), h.login("79000000002")
 	k := map[string]string{"Idempotency-Key": "same"}
-	r1, b1 := h.do(a, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, k)
-	r2, b2 := h.do(b, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, k)
+	r1, b1 := h.do(a, "POST", "/api/v1/applications", level1("business-dev", 0, 0), k)
+	r2, b2 := h.do(b, "POST", "/api/v1/applications", level1For("2224000012", 18_000_000, "business-dev", 0, 0), k)
 	if r1.StatusCode != 201 || r2.StatusCode != 201 || bytes.Equal(b1, b2) || r2.Header.Get("Idempotent-Replayed") != "" {
 		t.Fatal("ключ одного клиента не должен отдавать ответ другому")
 	}
@@ -89,7 +89,7 @@ func TestIdempotencyKeysAreScopedPerClient(t *testing.T) {
 func TestETagNotModified(t *testing.T) {
 	h := newHarness(t)
 	c := h.login("79000000001")
-	h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, nil)
+	h.do(c, "POST", "/api/v1/applications", level1("business-dev", 0, 0), nil)
 	r1, _ := h.do(c, "GET", "/api/v1/applications", nil, nil)
 	tag := r1.Header.Get("ETag")
 	if tag == "" || r1.Header.Get("Cache-Control") != "private, no-cache" {
@@ -99,7 +99,7 @@ func TestETagNotModified(t *testing.T) {
 	if r2.StatusCode != 304 || len(b2) != 0 {
 		t.Fatalf("unchanged data must give 304 without body, got %d (%d bytes)", r2.StatusCode, len(b2))
 	}
-	h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "overdraft"}, nil)
+	h.do(c, "POST", "/api/v1/applications", level1("overdraft", 0, 0), nil)
 	if r3, _ := h.do(c, "GET", "/api/v1/applications", nil, map[string]string{"If-None-Match": tag}); r3.StatusCode != 200 {
 		t.Fatalf("changed data must give 200, got %d", r3.StatusCode)
 	}
@@ -113,7 +113,7 @@ func TestPaginationAndFilters(t *testing.T) {
 	h := newHarness(t)
 	c := h.login("79000000001")
 	for i := 0; i < 5; i++ {
-		h.do(c, "POST", "/api/v1/applications", map[string]any{"product_id": "business-dev"}, nil)
+		h.do(c, "POST", "/api/v1/applications", level1("business-dev", 0, 0), nil)
 	}
 	r, b := h.do(c, "GET", "/api/v1/applications?limit=2&offset=0", nil, nil)
 	var page []domain.Application

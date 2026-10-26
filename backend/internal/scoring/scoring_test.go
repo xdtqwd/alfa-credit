@@ -56,11 +56,41 @@ func TestAnnuity(t *testing.T) {
 }
 
 func TestTransitions(t *testing.T) {
-	if !domain.CanTransition(domain.StatusDraft, domain.StatusSubmitted) {
-		t.Fatal("draft → submitted must be allowed")
+	if !domain.CanTransition(domain.StatusFullForm, domain.StatusSubmitted) {
+		t.Fatal("full_form → submitted must be allowed")
 	}
-	if domain.CanTransition(domain.StatusDraft, domain.StatusIssued) {
-		t.Fatal("draft → issued must be forbidden")
+	if domain.CanTransition(domain.StatusFullForm, domain.StatusIssued) {
+		t.Fatal("full_form → issued must be forbidden")
+	}
+}
+
+// Предварительный расчёт без кредитной истории: решение по посильности платежа, а не по порогам балла.
+func TestPrescoreDecidesByAffordability(t *testing.T) {
+	p, _ := domain.FindProduct("business-dev")
+	cases := []struct {
+		name string
+		app  *domain.Application
+		want domain.DecisionType
+	}{
+		{"affordable → approved at the base rate", app(3_000_000, 84_000_000, 0, 24, "2015-03-12"), domain.DecisionApproved},
+		{"heavy load → counter offer, not a rejection", app(20_000_000, 18_000_000, 200_000, 24, "2018-07-01"), domain.DecisionCounter},
+		{"nothing affordable → rejected", app(3_000_000, 600_000, 60_000, 24, "2025-11-01"), domain.DecisionRejected},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := Prescore(c.app, p, now)
+			if r.Decision.Type != c.want {
+				t.Fatalf("got %s (score %d), want %s", r.Decision.Type, r.Score, c.want)
+			}
+			for _, f := range r.Factors {
+				if strings.Contains(f.Name, "БКИ") || strings.Contains(f.Name, "Просрочки") {
+					t.Fatalf("prescore must not use the credit bureau: %+v", r.Factors)
+				}
+			}
+			if c.want == domain.DecisionApproved && r.Decision.Rate != p.Rate {
+				t.Fatalf("no rate bonus without credit history: %v", r.Decision.Rate)
+			}
+		})
 	}
 }
 

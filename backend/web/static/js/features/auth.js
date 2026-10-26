@@ -3,7 +3,7 @@ import { api } from '../core/api.js';
 import { $, $$, debounce } from '../core/dom.js';
 import { esc, phone, digits } from '../core/format.js';
 import { navigate } from '../core/router.js';
-import { session, signIn, signOut, refresh, isStaff } from '../core/session.js';
+import { signIn, signOut, refresh, isStaff } from '../core/session.js';
 import { openModal, toast } from '../ui/feedback.js';
 import { icon, logoSign } from '../ui/icons.js';
 
@@ -142,7 +142,7 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
           toast(t === 'login' ? `Здравствуйте, ${user.full_name.split(' ')[1] || user.full_name}` : 'Кабинет создан');
           if (isStaff(user)) {
             resolve(null);
-            navigate('/bank');
+            navigate('/bank/profile');
             return;
           }
           resolve(user);
@@ -166,16 +166,6 @@ export function openAuth({ reason = '', tab = 'login' } = {}) {
     });
     show(tab);
   });
-}
-
-/** Гарантирует вход: если клиент не вошёл — показывает окно входа. true — можно продолжать. */
-export async function requireAuth(reason) {
-  if (isStaff()) {
-    toast('Кредит оформляет представитель компании — вы вошли как сотрудник банка', { error: true });
-    return false;
-  }
-  if (session.me) return true;
-  return !!(await openAuth({ reason }));
 }
 
 export async function logout() {

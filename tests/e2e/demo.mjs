@@ -46,23 +46,38 @@ async function caption(page, text, ms = 2200) {
   if (ms) await sleep(ms);
 }
 
-async function login(page, phone) {
-  await page.click('[data-header=login]');
-  await page.waitForSelector('#auth-phone');
-  await page.type('#auth-phone', phone, { delay: 40 });
-  await page.type('#auth-password', 'demo1234', { delay: 40 });
-  await page.click('#auth-form button[type=submit]');
-  await page.waitForSelector('#requisites');
+/** 1-й уровень: компания из демо-списка, выручка из ФНС → предварительный расчёт. */
+async function level1(page, inn, amount = 0) {
+  await page.waitForSelector('#ap-inn');
+  await caption(page, 'Предварительный расчёт — без входа: кредит, ИНН компании и выручка', 1800);
+  if (amount) {
+    await page.fill('#ap-calc [data-calc=amount-text]', String(amount));
+    await page.press('#ap-calc [data-calc=amount-text]', 'Enter');
+  }
+  await page.selectOption('#ap-inn', inn);
+  await page.waitForSelector('[data-use-fns]');
+  await sleep(700);
+  await caption(page, 'Компания — из ЕГРЮЛ, выручку подставляем из ФНС одной кнопкой', 0);
+  await page.click('[data-use-fns]');
+  await sleep(1400);
+  await page.click('#prescore');
+  await page.waitForSelector('#prescore-result');
+  await page.locator('#prescore-result').scrollIntoViewIfNeeded();
 }
 
-async function fillAndSubmit(page) {
-  await page.waitForSelector('#f-revenue');
-  await caption(page, 'Анкета уже заполнена из профиля и ЕГРЮЛ — осталось подставить выручку из ФНС и дать согласие');
-  await page.click('[data-use-fns]');
-  await sleep(600);
-  await page.check('#f-consent');
+/** Вход через Госуслуги (демо-окно ЕСИА) → 2-й уровень анкеты. */
+async function esia(page) {
+  await page.click('#esia-go');
+  await page.waitForSelector('.esia__person.is-on');
+  await caption(page, 'Дальше — вход через Госуслуги: учётка руководителя компании выбрана сразу', 2400);
+  await page.click('#esia-ok');
+  await page.waitForSelector('[data-key="consent"]');
+}
+
+async function submitLevel2(page) {
+  await page.check('#ff-consent');
   await page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout: 8000 });
-  await caption(page, 'Отправляем — без отдельного шага «оставить заявку»', 1400);
+  await sleep(600);
   await page.click('#submit');
   await page.waitForSelector('.stepper');
 }
@@ -95,17 +110,23 @@ async function fillAndSubmit(page) {
       await sleep(900);
     }
 
-    // 2. Оформить без входа нельзя → вход → сразу анкета
-    await caption(page, 'Оформить без входа нельзя: вход по телефону, и сразу открывается анкета', 1500);
+    // 2. «Оформить онлайн» → 1-й уровень с параметрами калькулятора, без входа
+    await caption(page, '«Оформить онлайн» — сумма и срок переносятся, входить пока не нужно', 1500);
     await page.click('#calc [data-calc-apply]');
-    await page.waitForSelector('#auth-phone');
-    await page.type('#auth-phone', '79000000001', { delay: 40 });
-    await page.type('#auth-password', 'demo1234', { delay: 40 });
-    await page.click('#auth-form button[type=submit]');
-    await fillAndSubmit(page);
+    await level1(page, '7701234567');
+    await caption(page, 'Упрощённый скоринг за доли секунды: реестр, ФНС и нагрузка — пока без кредитной истории', 3200);
 
-    // 3. Банковская логика: конвейер и кабинет банка
-    await caption(page, 'Банк обрабатывает заявку: проверка данных (ЕГРЮЛ, ФНС, БКИ) → оценка риска → решение', 1200);
+    // 3. 2-й уровень: Госуслуги, документы, обеспечение
+    await esia(page);
+    await caption(page, 'Личность — из Госуслуг, паспорт руководителя подставлен сам', 2600);
+    await page.locator('[data-key="security"]').scrollIntoViewIfNeeded();
+    await page.click('[data-collateral=realty]');
+    await page.fill('#ff-coll-value', '20000000');
+    await caption(page, 'Кредит больше 5 млн — нужен залог: недвижимость на всю сумму снизит ставку на 1 п.п.', 2400);
+    await submitLevel2(page);
+
+    // 4. Банковская логика: полный скоринг в кабинете банка
+    await caption(page, 'Полный скоринг: ЕГРЮЛ, БКИ, паспорт и обеспечение → окончательное решение', 1200);
     const appUrl = page.url();
     // в видео одна вкладка: кабинет банка открываем служебным токеном, не выходя из клиента
     await page.evaluate(() => localStorage.setItem('bank_token', JSON.stringify('demo-bank')));
@@ -117,36 +138,10 @@ async function fillAndSubmit(page) {
       null,
       { timeout: 30000 },
     );
-    await caption(page, 'Скоринг принял предварительное решение: балл, условия и причина видны банку', 3000);
-
-    // 4. Клиент видит предварительное решение и заполняет полную анкету
+    await caption(page, 'Решение принято: балл, условия и причина видны банку', 3000);
     await page.goto(appUrl);
-    await page.waitForSelector('#decision.decision--ok', { timeout: 30000 });
-    await caption(page, 'Клиент сразу видит предварительное решение и что от него нужно — простыми словами', 3000);
-    await page.click('#todo [data-action=accept]');
-    await page.waitForSelector('#ff-employees');
-    await caption(page, 'Подробности о бизнесе спрашиваем только после предварительного одобрения', 0);
-    await page.fill('#ff-employees', '25');
-    await sleep(500);
-    await page.click('[data-premises=rent]');
-    await sleep(500);
-    await page.fill('#ff-purpose', 'Открытие второго магазина и закупка торгового оборудования');
-    await sleep(800);
-    await page.click('[data-collateral=realty]');
-    await page.fill('#ff-coll-value', '20000000');
-    if (await page.isChecked('#ff-guarantor')) await page.uncheck('#ff-guarantor'); // залога хватает, поручитель не нужен
-    await caption(page, 'Залог недвижимостью на всю сумму — ставка станет ниже на 1 п.п.', 2200);
-    await page.check('#ff-consent');
-    await page.waitForFunction(() => document.querySelector('#save-state')?.textContent === 'Сохранено', null, { timeout: 8000 });
-    await sleep(600);
-    await page.click('#submit');
-    await page.waitForSelector('.stepper');
-    await caption(page, 'Банк проверяет полную анкету и выносит окончательное решение', 0);
-    await page.waitForFunction(() => /окончательно/.test(document.querySelector('#decision h2')?.textContent || ''), null, {
-      timeout: 30000,
-    });
-    await page.waitForSelector('#decision[data-decision=approved] .actions');
-    await caption(page, 'Кредит одобрен окончательно — можно подписывать', 3000);
+    await page.waitForSelector('#decision[data-decision=approved]', { timeout: 30000 });
+    await caption(page, 'Окончательное решение рядом с предварительным: кредитная история и залог снизили ставку', 3400);
 
     // 5. Подписание, деньги и платёж
     await page.click('#todo [data-action=accept]');
@@ -175,14 +170,16 @@ async function fillAndSubmit(page) {
     await page.click('[data-header=logout]');
     await page.waitForSelector('[data-header=login]');
 
-    // 7. Отказ с понятным объяснением
+    // 7. Отказ: просрочки видны только на полном скоринге
     await caption(page, 'Другой сценарий: у компании просрочки в БКИ', 1800);
-    await login(page, '79000000003');
-    await page.click('[data-header=new-loan]');
-    await fillAndSubmit(page);
+    await page.goto(BASE + '/#/apply');
+    await level1(page, '5401000009', 3000000);
+    await caption(page, 'Без кредитной истории расчёт одобряет — просрочки видны только на полном скоринге', 2800);
+    await esia(page);
+    await submitLevel2(page);
     await page.waitForSelector('#decision.decision--bad', { timeout: 30000 });
     await page.locator('#decision').scrollIntoViewIfNeeded();
-    await caption(page, 'Отказ не «чёрный ящик»: причина на данных анкеты и что можно сделать', 4500);
+    await caption(page, 'Отказ не «чёрный ящик»: причина на данных из БКИ и что можно сделать', 4500);
     await caption(page, 'Без платных API и подписок · PostgreSQL + Kafka в одном docker compose · обычный ПК', 3000);
     await caption(page, '', 0);
   } finally {

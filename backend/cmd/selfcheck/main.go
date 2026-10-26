@@ -5,9 +5,9 @@
 //	docker compose exec api /selfcheck -phase submit        # только подать заявку (для проверки отказа Kafka)
 //	docker compose exec api /selfcheck -phase await -number КР-000001
 //
-// Проверяет: здоровье и готовность (PostgreSQL, Kafka), вход, создание заявки с Idempotency-Key,
-// анкету, подачу, решение конвейера через Kafka, ETag/304, принятие, подписание и выдачу,
-// оплату без двойного списания, журнал аудита, метрики, JSON-ошибки.
+// Проверяет: здоровье и готовность (PostgreSQL, Kafka), предварительный расчёт без входа, вход через
+// Госуслуги (демо), создание заявки с Idempotency-Key, документы 2-го уровня, полный скоринг через Kafka,
+// ETag/304, принятие, подписание и выдачу, оплату без двойного списания, журнал аудита, метрики, JSON-ошибки.
 package main
 
 import (
@@ -29,7 +29,8 @@ var (
 	base       = flag.String("base", "http://127.0.0.1:8080", "адрес API")
 	metrics    = flag.String("metrics", "http://127.0.0.1:9090/metrics", "адрес /metrics (пусто — не проверять)")
 	token      = flag.String("token", envOr("BANK_TOKEN", "demo-bank"), "X-Bank-Token кабинета банка")
-	phone      = flag.String("phone", "79000000001", "демо-аккаунт клиента")
+	person     = flag.String("person", "esia-1", "демо-учётка Госуслуг клиента (руководитель компании)")
+	inn        = flag.String("inn", "7701234567", "ИНН компании, которой руководит клиент")
 	staffPhone = flag.String("staff-phone", "79000000005", "демо-аккаунт сотрудника банка")
 	pass       = flag.String("password", "demo1234", "пароль демо-аккаунта")
 	phase      = flag.String("phase", "all", "all | submit | await")
@@ -124,6 +125,9 @@ type app struct {
 		Rate   float64 `json:"rate"`
 		Final  bool    `json:"final"`
 	} `json:"decision"`
+	Full *struct {
+		DirectorPassport json.RawMessage `json:"director_passport"`
+	} `json:"full_form"`
 	Payments    []json.RawMessage `json:"payments"`
 	NextPayment int64             `json:"next_payment"`
 }
@@ -184,28 +188,73 @@ func (k *checker) infra() (bus string, err error) {
 	return bus, nil
 }
 
-func (k *checker) login() error {
-	r, err := k.do("POST", "/api/v1/auth/login", map[string]string{"phone": *phone, "password": *pass}, nil)
+// level1 — данные 1-го уровня: кредит, ИНН и выручка (как в ФНС).
+func (k *checker) level1() (map[string]any, error) {
+	r, err := k.do("GET", "/api/v1/companies/"+*inn, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var c struct {
+		Name            string `json:"name"`
+		RevenueLastYear int64  `json:"revenue_last_year"`
+	}
+	_ = r.json(&c)
+	if !k.check(r.code == 200 && c.RevenueLastYear > 0, f("компания по ИНН %s: %s (из реестра, без входа)", *inn, c.Name), f("реестр → %d %s", r.code, r.body)) {
+		return nil, errors.New("компания не найдена")
+	}
+	return map[string]any{"product_id": "business-dev", "amount": 3_000_000, "term_months": 24, "inn": *inn,
+		"financials": map[string]any{"annual_revenue": c.RevenueLastYear, "monthly_obligations": 0}}, nil
+}
+
+// login — 1-й уровень без входа (предварительный расчёт), затем вход через Госуслуги.
+func (k *checker) login(body map[string]any) error {
+	anon := &checker{c: &http.Client{Timeout: k.c.Timeout}}
+	r, err := anon.do("POST", "/api/v1/prescore", body, nil)
 	if err != nil {
 		return err
 	}
-	if !k.check(r.code == 200, f("вход клиента %s", *phone), f("вход → %d %s", r.code, r.body)) {
+	var pre struct {
+		Decision struct {
+			Type  string `json:"type"`
+			Final bool   `json:"final"`
+		} `json:"decision"`
+		Score *int `json:"score"`
+	}
+	_ = r.json(&pre)
+	score := "—"
+	if pre.Score != nil {
+		score = fmt.Sprint(*pre.Score)
+	}
+	if !k.check(r.code == 200 && pre.Decision.Type == "approved" && !pre.Decision.Final,
+		f("предварительный расчёт без входа за %d мс: одобрено, балл %s (без кредитной истории)", r.dur.Milliseconds(), score),
+		f("предварительный расчёт → %d %s", r.code, r.body)) {
+		return errors.New("предварительный расчёт не одобрил")
+	}
+	r, err = k.do("POST", "/api/v1/auth/esia", map[string]string{"person_id": *person}, nil)
+	if err != nil {
+		return err
+	}
+	var me struct {
+		FullName string          `json:"full_name"`
+		Identity json.RawMessage `json:"identity"`
+	}
+	_ = r.json(&me)
+	if !k.check(r.code == 200 && len(me.Identity) > 0, f("вход через Госуслуги (демо): %s, личность подтверждена", me.FullName), f("вход через Госуслуги → %d %s", r.code, r.body)) {
 		return errors.New("не удалось войти")
 	}
 	return nil
 }
 
-// newApp создаёт заявку с ключом идемпотентности, заполняет анкету и подаёт её.
-func (k *checker) newApp() (app, error) {
+// newApp создаёт заявку с ключом идемпотентности, прикладывает документы 2-го уровня и отправляет её.
+func (k *checker) newApp(body map[string]any) (app, error) {
 	var a app
 	key := fmt.Sprintf("selfcheck-%d", time.Now().UnixNano())
-	body := map[string]any{"product_id": "business-dev", "amount": 3_000_000, "term_months": 24}
 	r1, err := k.do("POST", "/api/v1/applications", body, map[string]string{"Idempotency-Key": key})
 	if err != nil {
 		return a, err
 	}
 	_ = r1.json(&a)
-	if !k.check(r1.code == 201 && a.ID != "", f("заявка создана: %s (сразу анкета, без «оставить заявку»)", a.Number), f("создание заявки → %d %s", r1.code, r1.body)) {
+	if !k.check(r1.code == 201 && a.ID != "" && a.Status == "full_form", f("заявка создана: %s — сразу 2-й уровень, предварительный расчёт сохранён", a.Number), f("создание заявки → %d %s", r1.code, r1.body)) {
 		return a, errors.New("заявка не создана")
 	}
 	r2, _ := k.do("POST", "/api/v1/applications", body, map[string]string{"Idempotency-Key": key})
@@ -214,19 +263,18 @@ func (k *checker) newApp() (app, error) {
 	k.check(r2.hdr.Get("Idempotent-Replayed") == "true" && a2.ID == a.ID,
 		"повтор с тем же Idempotency-Key вернул ту же заявку, дубль не создан", f("повтор создал дубль: %s vs %s", a2.ID, a.ID))
 
-	revenue := int64(84_000_000)
-	if a.Company != nil && a.Company.RevenueLastYear > 0 {
-		revenue = a.Company.RevenueLastYear
+	var passport json.RawMessage
+	if a.Full != nil {
+		passport = a.Full.DirectorPassport
 	}
-	r, _ := k.do("PATCH", "/api/v1/applications/"+a.ID, map[string]any{
-		"financials": map[string]any{"annual_revenue": revenue, "monthly_obligations": 0, "employees": 0},
-		"consent":    true,
-	}, nil)
-	k.check(r.code == 200, "анкета заполнена (компания и контакт — из профиля, выручка — как в ФНС)", f("автосохранение → %d %s", r.code, r.body))
+	r, _ := k.do("PATCH", "/api/v1/applications/"+a.ID, map[string]any{"full_form": map[string]any{
+		"director_passport": passport, "collateral": map[string]any{"type": "none"}, "consent": true,
+	}}, nil)
+	k.check(r.code == 200, "2-й уровень заполнен: паспорт руководителя — из Госуслуг, согласие на БКИ", f("автосохранение → %d %s", r.code, r.body))
 
 	r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/submit", nil, nil)
 	_ = r.json(&a)
-	if !k.check(r.code == 200 && a.Status == "submitted", f("заявка подана за %d мс — ответ не ждёт конвейер", r.dur.Milliseconds()), f("подача → %d %s", r.code, r.body)) {
+	if !k.check(r.code == 200 && a.Status == "submitted", f("заявка отправлена на полный скоринг за %d мс — ответ не ждёт конвейер", r.dur.Milliseconds()), f("подача → %d %s", r.code, r.body)) {
 		return a, errors.New("заявка не подана")
 	}
 	return a, nil
@@ -256,11 +304,7 @@ func (k *checker) await(a app) (app, error) {
 				if a.Score != nil {
 					score = fmt.Sprint(*a.Score)
 				}
-				kind := "предварительное"
-				if a.Decision != nil && a.Decision.Final {
-					kind = "окончательное"
-				}
-				k.ok("%s решение конвейера через %.1f с: %s, балл %s", kind, time.Since(start).Seconds(), a.Status, score)
+				k.ok("окончательное решение по полному скорингу через %.1f с: %s, балл %s", time.Since(start).Seconds(), a.Status, score)
 				if !k.etagChecked {
 					k.etagChecked = true
 					k.check(notModified, "опрос статуса: пока ничего не изменилось, сервер отвечает 304 без тела (ETag)", "ни одного 304 при опросе: ETag не работает")
@@ -289,31 +333,6 @@ func (k *checker) loan(a app) {
 	_ = r.json(&me)
 	before := me.Balance
 
-	// уровень 2: предварительные условия → полная анкета → окончательное решение
-	if a.Decision != nil && !a.Decision.Final {
-		r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/accept", nil, nil)
-		_ = r.json(&a)
-		if !k.check(r.code == 200 && a.Status == "full_form", "предварительные условия приняты — открыта полная анкета", f("принятие предварительного решения → %d %s", r.code, r.body)) {
-			return
-		}
-		r, _ = k.do("PATCH", "/api/v1/applications/"+a.ID, map[string]any{"full_form": map[string]any{
-			"employees": 12, "premises": "rent", "purpose_details": "Самопроверка: развитие бизнеса, закупка оборудования",
-			"collateral": map[string]any{"type": "none"}, "statements_consent": true,
-		}}, nil)
-		k.check(r.code == 200, "полная анкета заполнена: о бизнесе, обеспечение, согласие на выписки", f("полная анкета → %d %s", r.code, r.body))
-		r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/submit", nil, nil)
-		_ = r.json(&a)
-		if !k.check(r.code == 200 && a.Status == "verification", "полная анкета отправлена на окончательное решение", f("отправка полной анкеты → %d %s", r.code, r.body)) {
-			return
-		}
-		var err error
-		if a, err = k.await(a); err != nil {
-			return
-		}
-		if !k.check(a.Status == "approved" && a.Decision != nil && a.Decision.Final, "кредит одобрен окончательно", f("окончательное решение: %s", a.Status)) {
-			return
-		}
-	}
 	r, _ = k.do("POST", "/api/v1/applications/"+a.ID+"/accept", nil, nil)
 	_ = r.json(&a)
 	k.check(r.code == 200 && a.Status == "signing", "условия приняты", f("принятие → %d %s", r.code, r.body))
@@ -397,7 +416,7 @@ func (k *checker) api() {
 	k.check(r.code == 200 && r.hdr.Get("X-Total-Count") != "", f("список заявок с пагинацией (X-Total-Count: %s)", r.hdr.Get("X-Total-Count")), f("список заявок → %d", r.code))
 	anon := &checker{c: &http.Client{Timeout: 5 * time.Second}}
 	r, _ = anon.do("POST", "/api/v1/applications", map[string]string{"product_id": "business-dev"}, nil)
-	k.check(r.code == 401, "без входа оформить нельзя (401)", f("создание без входа → %d", r.code))
+	k.check(r.code == 401, "без входа рассчитать можно, а подать заявку — нет (401)", f("создание без входа → %d", r.code))
 	r, _ = k.do("GET", "/api/v1/products", nil, nil)
 	k.check(r.hdr.Get("Cache-Control") != "" && r.hdr.Get("ETag") != "", f("справочник продуктов кэшируется (%s)", r.hdr.Get("Cache-Control")), "у продуктов нет Cache-Control/ETag")
 
@@ -423,11 +442,15 @@ func (k *checker) phaseAll() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("\nКлиент: от калькулятора до решения")
-	if err := k.login(); err != nil {
+	fmt.Println("\nКлиент: предварительный расчёт → Госуслуги → документы → решение")
+	body, err := k.level1()
+	if err != nil {
 		return err
 	}
-	a, err := k.newApp()
+	if err := k.login(body); err != nil {
+		return err
+	}
+	a, err := k.newApp(body)
 	if err != nil {
 		return err
 	}
@@ -445,10 +468,14 @@ func (k *checker) phaseAll() error {
 
 // phaseSubmit — подать заявку и вывести номер (для проверки при остановленной Kafka).
 func (k *checker) phaseSubmit() error {
-	if err := k.login(); err != nil {
+	body, err := k.level1()
+	if err != nil {
 		return err
 	}
-	a, err := k.newApp()
+	if err := k.login(body); err != nil {
+		return err
+	}
+	a, err := k.newApp(body)
 	if err != nil {
 		return err
 	}

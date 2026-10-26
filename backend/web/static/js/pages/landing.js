@@ -1,6 +1,7 @@
 // Главная: продуктовая страница кредитов для бизнеса — вёрстка по макету Figma «УККП 2» (design/figma-main.json).
 // Все действия прежние: калькулятор считает сервер, «Оформить» открывает анкету продукта,
 // «Рассчитать» переносит продукт в калькулятор, вопросы раскрываются.
+import { api } from '../core/api.js';
 import { $, on, storage } from '../core/dom.js';
 import { esc, fmt, months, rate, rub, shortRub } from '../core/format.js';
 import { session, product } from '../core/session.js';
@@ -101,7 +102,7 @@ export default async function landing(root, { signal, scroll }) {
         <div class="lp-hero__text">
           <h1>Деньги, когда они нужны бизнесу</h1>
           <p class="lp-hero__lead">Кредит на развитие бизнеса – решение за 15 секунд, без визита в банк</p>
-          <button class="lp-btn lp-btn--hero" data-start="business-dev">Оформить заявку</button>
+          <button class="lp-btn lp-btn--hero" data-start="">Оформить заявку</button>
         </div>
         <img class="lp-hero__art" src="${IMG}hero.webp" width="519" height="323" alt="" fetchpriority="high">
       </div>
@@ -119,8 +120,11 @@ export default async function landing(root, { signal, scroll }) {
               <span class="lp-need__title">Вам понадобится</span>
               <span class="lp-need__items">
                 <span class="lp-need__item"><img src="${IMG}passport.svg" width="30" height="30" alt="">Паспорт</span>
-                <span class="lp-need__item"><img src="${IMG}house.svg" width="30" height="30" alt="">Залог</span>
+                <span class="lp-need__item lp-tip" id="need-collateral" tabindex="0" aria-describedby="tip-collateral" hidden>
+                  <img src="${IMG}house.svg" width="30" height="30" alt=""><span class="lp-tip__label">Залог</span>
+                </span>
               </span>
+              <span class="lp-tip__pop" id="tip-collateral" role="tooltip"></span>
             </div>
           </div>
           <div class="lp-offer">
@@ -227,7 +231,25 @@ export default async function landing(root, { signal, scroll }) {
     signal,
   );
 
+  // «Залог» в «Вам понадобится» — только когда он нужен: кредит больше порога обеспечения (у овердрафта анкета одна)
+  let security = null;
+  const paintNeed = () => {
+    $('#need-collateral', root).hidden = !(security && !p.express && amount > security.required_from);
+  };
+  api('GET', '/security-rules')
+    .then((r) => {
+      if (signal.aborted) return;
+      security = r;
+      const kinds = r.kinds.map((k) => k.name[0].toLowerCase() + k.name.slice(1)).join(', ');
+      $('#tip-collateral', root).innerHTML = `
+        <b>Кредит больше ${esc(shortRub(r.required_from))} — под залог</b>
+        <span>Нужен залог хотя бы на половину суммы или поручитель без просрочек. Принимаем: ${esc(kinds)}. Залог на всю сумму снизит ставку на 1 п.п.</span>`;
+      paintNeed();
+    })
+    .catch(() => {});
+
   const recalc = () => {
+    paintNeed();
     pay.classList.add('is-stale');
     quoter(p.id, amount, term);
     storage.set('calc', { product: p.id, amount, term });
@@ -263,7 +285,7 @@ export default async function landing(root, { signal, scroll }) {
     signal,
   );
   on(root, 'click', '[data-calc-apply]', () => startApplication(p.id, amount, term), signal);
-  on(root, 'click', '[data-start]', (_, el) => startApplication(el.dataset.start), signal);
+  on(root, 'click', '[data-start]', (_, el) => startApplication(el.dataset.start || null), signal);
 
   if (scroll) requestAnimationFrame(() => $(`#${scroll}`, root)?.scrollIntoView({ behavior: 'smooth' }));
 }
