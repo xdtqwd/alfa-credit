@@ -59,7 +59,8 @@ export function signDialog(a) {
       $('#sign-btn', el).disabled = !e.target.checked;
     });
     $('#sign-btn', el).addEventListener('click', async (e) => {
-      e.currentTarget.disabled = true;
+      const btn = e.currentTarget; // после await currentTarget уже null
+      btn.disabled = true;
       try {
         result = await api('POST', `/applications/${a.id}/sign`, { confirm: true });
         putApp(result);
@@ -68,7 +69,7 @@ export function signDialog(a) {
         toast('Готово! Деньги на расчётном счёте');
       } catch (ex) {
         toast(ex.message, { error: true });
-        e.currentTarget.disabled = false;
+        btn.disabled = false;
       }
     });
   });
@@ -97,7 +98,8 @@ export function payDialog(a) {
     );
     el.classList.add('stack');
     $('#pay-ok', el).addEventListener('click', async (e) => {
-      e.currentTarget.disabled = true;
+      const btn = e.currentTarget; // после await currentTarget уже null
+      btn.disabled = true;
       try {
         result = await api('POST', `/applications/${a.id}/pay`);
         putApp(result);
@@ -106,7 +108,7 @@ export function payDialog(a) {
         toast('Платёж проведён');
       } catch (ex) {
         $('#pay-error', el).textContent = ex.message;
-        e.currentTarget.disabled = false;
+        btn.disabled = false;
       }
     });
   });

@@ -194,6 +194,23 @@ func TestESIALogin(t *testing.T) {
 	}
 }
 
+// Регрессия: личность руководителя одной компании нельзя прикрепить к аккаунту другой компании
+// с тем же телефоном — иначе по ней подавалась бы заявка за чужую компанию.
+func TestESIALoginRejectsAccountOfAnotherCompany(t *testing.T) {
+	e := newEnv(t)
+	other, _, err := e.auth.Register(ctx, RegisterInput{Phone: "79000000006", Password: "longpass1", FullName: "Иванов Иван Иванович", INN: "5555555555"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ve *domain.ValidationError
+	if _, _, err := e.auth.ESIALogin(ctx, "esia-5", "9.9.9.9"); !errors.As(err, &ve) || ve.Field != "person_id" {
+		t.Fatalf("esia-5 runs 222400000012, the account is 5555555555: want person_id error, got %v", err)
+	}
+	if got, _ := e.users.GetUser(ctx, other.ID); got.Identity != nil {
+		t.Fatal("identity must not be attached to an account of another company")
+	}
+}
+
 // Заявка создаётся только после входа через Госуслуги и только от компании, которой человек руководит.
 func TestCreateAfterGosuslugi(t *testing.T) {
 	e := newEnv(t)
@@ -321,6 +338,52 @@ func TestSignCreditsBalanceAndPayDebits(t *testing.T) {
 	}
 	if got := e.user(t, "79000000001").Balance; got != after.Balance-sched[0].Payment {
 		t.Fatalf("pay must debit exactly the schedule payment: %d", got)
+	}
+}
+
+// unsavedRepo — хранилище, которое выполняет изменение, но не может его записать (например, диск полон).
+type unsavedRepo struct{ storage.Repository }
+
+func (r unsavedRepo) Update(ctx context.Context, id string, fn func(a *domain.Application) error) (*domain.Application, error) {
+	a, err := r.Repository.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := fn(a); err != nil {
+		return nil, err
+	}
+	return nil, errors.New("disk full")
+}
+
+// Регрессия: в файловом режиме (без транзакций) подпись атомарна — заявка не становится «выданной»
+// без зачисления денег, а деньги не остаются на счёте, если заявка не сохранилась.
+func TestSignCompensatesWhenApplicationNotSaved(t *testing.T) {
+	e := newEnv(t)
+	u := e.user(t, "79000000001")
+	a := approve(t, e, u.ID, 1_000_000, 12)
+	if _, err := e.svc.Accept(ctx, u.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	// счёт недоступен — заявка остаётся на подписании
+	e.svc.Users = flakyUsers{UserRepository: e.users, updateErr: errors.New("db down")}
+	if _, err := e.svc.Sign(ctx, u.ID, a.ID, true); err == nil {
+		t.Fatal("sign must fail when the account cannot be credited")
+	}
+	if got, _ := e.svc.Get(ctx, u.ID, a.ID); got.Status != domain.StatusSigning {
+		t.Fatalf("application must not be issued without money, got %s", got.Status)
+	}
+	e.svc.Users = e.users
+	// заявка не сохранилась — зачисление откатывается
+	e.svc.Repo = unsavedRepo{e.repo}
+	if _, err := e.svc.Sign(ctx, u.ID, a.ID, true); err == nil {
+		t.Fatal("sign must fail when the application is not saved")
+	}
+	if got := e.user(t, "79000000001").Balance; got != u.Balance {
+		t.Fatalf("credited amount must be reverted: %d → %d", u.Balance, got)
+	}
+	e.svc.Repo = e.repo
+	if got, _ := e.svc.Get(ctx, u.ID, a.ID); got.Status != domain.StatusSigning {
+		t.Fatalf("application must stay in signing, got %s", got.Status)
 	}
 }
 

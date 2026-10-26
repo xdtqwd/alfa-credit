@@ -96,6 +96,12 @@ export default async function apply(root, { signal }) {
   if (!d.inn && me) d.inn = me.company.inn;
   let p = d.product_id ? product(d.product_id) : null;
   if (!p) d.product_id = null;
+  // сумма и срок — в границах кредита: черновик может прийти, например, с «меньшей суммой» после отказа
+  const fit = () => {
+    d.amount = Math.min(p.max_amount, Math.max(p.min_amount, d.amount || p.default_amount));
+    d.term_months = Math.min(p.max_term, Math.max(p.min_term, d.term_months || p.default_term));
+  };
+  if (p) fit();
   let company = null; // компания из реестра по выбранному ИНН
   let result = null; // ответ предварительного расчёта
   const save = () => storage.set(KEY, d);
@@ -168,8 +174,7 @@ export default async function apply(root, { signal }) {
   const pick = (id) => {
     p = product(id);
     d.product_id = p.id;
-    d.amount = Math.min(p.max_amount, Math.max(p.min_amount, d.amount || p.default_amount));
-    d.term_months = Math.min(p.max_term, Math.max(p.min_term, d.term_months || p.default_term));
+    fit();
     if (!p.purposes.includes(d.purpose)) d.purpose = p.purposes[0];
     $$('[data-product]', root).forEach((c) => {
       const isOn = c.dataset.product === id;
@@ -191,15 +196,21 @@ export default async function apply(root, { signal }) {
       : '';
   };
   const loadCompany = async () => {
+    const inn = d.inn;
     company = null;
-    if (d.inn) {
+    paintCompany(); // карточку и «подставить» прошлой компании убираем сразу
+    refresh();
+    let found = null;
+    if (inn) {
       try {
-        company = await api('GET', `/companies/${d.inn}`);
+        found = await api('GET', `/companies/${inn}`);
       } catch (e) {
-        toast(e.message, { error: true });
+        if (inn === d.inn) toast(e.message, { error: true });
       }
     }
-    if (signal.aborted) return;
+    // пока шёл запрос, ИНН могли сменить — ответ по прошлой компании не показываем
+    if (signal.aborted || inn !== d.inn) return;
+    company = found;
     paintCompany();
     refresh();
   };

@@ -168,6 +168,12 @@ func (s *AuthService) ESIALogin(ctx context.Context, personID, ip string) (*doma
 		return nil, "", err
 	case u.IsEmployee():
 		return nil, "", &domain.ValidationError{Field: "person_id", Message: "сотрудник банка входит в кабинет банка по телефону и паролю"}
+	case u.Company.INN != p.CompanyINN:
+		// Личность из Госуслуг подтверждает руководителя ДРУГОЙ компании: прикрепив её к этому аккаунту,
+		// человек смог бы подать заявку за чужую компанию.
+		return nil, "", &domain.ValidationError{Field: "person_id", Message: fmt.Sprintf(
+			"этот телефон привязан к аккаунту компании «%s», а по данным Госуслуг вы руководите компанией с ИНН %s — заявку за неё из этого аккаунта не подать",
+			u.Company.Name, p.CompanyINN)}
 	}
 	u, err = s.Users.UpdateUser(ctx, u.ID, func(x *domain.User) error { x.Identity, x.LastLoginAt = &id, now; return nil })
 	if err != nil {
