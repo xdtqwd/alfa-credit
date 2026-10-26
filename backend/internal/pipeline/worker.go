@@ -82,24 +82,31 @@ func (w *Worker) Handle(ctx context.Context, e events.Event) error {
 	if string(a.Status) != p.To {
 		return nil // устаревшее событие: заявка уже ушла дальше
 	}
-	run := func(ctx context.Context) error {
-		if w.Inbox != nil {
-			fresh, err := w.Inbox.MarkProcessed(ctx, Consumer, e.ID)
-			if err != nil {
-				return err
+	// Внешние запросы шага идут до транзакции; в ней — только отметка inbox и изменение заявки,
+	// чтобы соединение с БД не держалось, пока отвечают реестр и БКИ.
+	return w.process(ctx, a, func(ctx context.Context, apply func(context.Context) error) error {
+		run := func(ctx context.Context) error {
+			if w.Inbox != nil {
+				fresh, err := w.Inbox.MarkProcessed(ctx, Consumer, e.ID)
+				if err != nil {
+					return err
+				}
+				if !fresh {
+					obs.Default.Inc("pipeline_duplicates_total", "Повторно доставленные события, пропущенные конвейером")
+					return nil
+				}
 			}
-			if !fresh {
-				obs.Default.Inc("pipeline_duplicates_total", "Повторно доставленные события, пропущенные конвейером")
-				return nil
-			}
+			return apply(ctx)
 		}
-		return w.process(ctx, a)
-	}
-	if w.Tx != nil {
-		return w.Tx.InTx(ctx, run)
-	}
-	return run(ctx)
+		if w.Tx != nil {
+			return w.Tx.InTx(ctx, run)
+		}
+		return run(ctx)
+	})
 }
+
+// direct — применить изменение шага сразу, без inbox (подметальщик и ручной шаг).
+func direct(ctx context.Context, apply func(context.Context) error) error { return apply(ctx) }
 
 func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(w.Interval)
@@ -130,28 +137,40 @@ func (w *Worker) tick(ctx context.Context) {
 			obs.Default.Inc("pipeline_swept_total", "Заявки, продвинутые подметальщиком (событие не дошло вовремя)")
 			w.Log.Warn("pipeline sweep: application stuck, advancing", "app", a.Number, "status", a.Status, "since", a.StatusChangedAt)
 		}
-		if err := w.process(obs.WithActor(ctx, "system"), a); err != nil {
+		if err := w.process(obs.WithActor(ctx, "system"), a, direct); err != nil {
 			w.Log.Error("pipeline step failed", "app", a.Number, "status", a.Status, "err", err)
 		}
 	}
 }
 
-func (w *Worker) process(ctx context.Context, a *domain.Application) error {
+// process — один шаг конвейера в две фазы: prepare делает внешние запросы и готовит изменение,
+// commit применяет его (в Handle — в транзакции вместе с отметкой inbox).
+func (w *Worker) process(ctx context.Context, a *domain.Application, commit func(context.Context, func(context.Context) error) error) error {
 	start := time.Now()
 	defer func() {
 		obs.Default.Observe("pipeline_step_seconds", "Время шага конвейера (без паузы этапа)", time.Since(start).Seconds(), "step", string(a.Status))
 	}()
+	apply, err := w.prepare(ctx, a)
+	if err != nil || apply == nil {
+		return err
+	}
+	return commit(ctx, apply)
+}
+
+func (w *Worker) prepare(ctx context.Context, a *domain.Application) (func(context.Context) error, error) {
 	switch a.Status {
 	case domain.StatusSubmitted:
-		return w.update(ctx, a, func(x *domain.Application) error {
-			return x.Transition(domain.StatusDataCheck, "system", "Заявка принята, проверяем данные компании", w.Now())
-		})
+		return func(ctx context.Context) error {
+			return w.update(ctx, a, func(x *domain.Application) error {
+				return x.Transition(domain.StatusDataCheck, "system", "Заявка принята, проверяем данные компании", w.Now())
+			})
+		}, nil
 	case domain.StatusDataCheck:
 		return w.dataCheck(ctx, a)
 	case domain.StatusScoring:
-		return w.score(ctx, a)
+		return func(ctx context.Context) error { return w.score(ctx, a) }, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // update применяет изменение, только если статус не поменялся конкурентно (оптимистичная проверка).
@@ -169,17 +188,17 @@ func (w *Worker) update(ctx context.Context, a *domain.Application, fn func(*dom
 	return err
 }
 
-// dataCheck — проверки 2-го уровня. Окончательные отказы — только по реестру; сбой внешнего
-// сервиса — ретрай на следующем тике, а не отказ.
-func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
+// dataCheck — проверки 2-го уровня: запрашивает реестр и БКИ и возвращает изменение заявки.
+// Окончательные отказы — только по реестру; сбой внешнего сервиса — ретрай на следующем тике, а не отказ.
+func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) (func(context.Context) error, error) {
 	company, regErr := w.Registry.Lookup(ctx, a.INN)
 	var invalidINN *domain.ValidationError
 	if regErr != nil && !errors.Is(regErr, domain.ErrCompanyNotFound) && !errors.As(regErr, &invalidINN) {
-		return regErr // реестр недоступен — ретрай на следующем тике, а не отказ «компания не найдена»
+		return nil, regErr // реестр недоступен — ретрай на следующем тике, а не отказ «компания не найдена»
 	}
 	report, bkiErr := w.Bureau.Report(ctx, a.INN)
 	if bkiErr != nil {
-		return bkiErr // ретрай на следующем тике
+		return nil, bkiErr // ретрай на следующем тике
 	}
 	f := a.Full
 	if f == nil {
@@ -189,7 +208,7 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 	if f.Guarantor != nil {
 		r, err := w.Bureau.Report(ctx, f.Guarantor.INN)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		guarantor = r
 	}
@@ -250,15 +269,17 @@ func (w *Worker) dataCheck(ctx context.Context, a *domain.Application) error {
 		}
 	}
 
-	return w.update(ctx, a, func(x *domain.Application) error {
-		if company != nil {
-			x.Company = company
-		}
-		x.Bureau = report
-		x.Checks = checks
-		x.Decision = decision
-		return x.Transition(next, "system", comment, w.Now())
-	})
+	return func(ctx context.Context) error {
+		return w.update(ctx, a, func(x *domain.Application) error {
+			if company != nil {
+				x.Company = company
+			}
+			x.Bureau = report
+			x.Checks = checks
+			x.Decision = decision
+			return x.Transition(next, "system", comment, w.Now())
+		})
+	}, nil
 }
 
 // score — полный скоринг: балл с кредитной историей и правила обеспечения.
@@ -372,7 +393,9 @@ func resultFor(score int) string {
 }
 
 // Step выполняет один шаг конвейера для заявки (используется в тестах и ручном продвижении).
-func (w *Worker) Step(ctx context.Context, a *domain.Application) error { return w.process(ctx, a) }
+func (w *Worker) Step(ctx context.Context, a *domain.Application) error {
+	return w.process(ctx, a, direct)
+}
 
 func chk(code, name, result, details string) domain.Check {
 	return domain.Check{Code: code, Name: name, Result: result, Details: details}

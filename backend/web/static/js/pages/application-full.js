@@ -342,8 +342,7 @@ export default async function applicationFull(root, a, { signal }) {
       btn.disabled = true;
       btn.textContent = 'Отправляем…';
       try {
-        await autosave.settle();
-        await api('PATCH', `/applications/${id}`, { full_form: f });
+        await autosave.settle(); // все правки анкеты уже на сервере
         putApp(await api('POST', `/applications/${id}/submit`));
         navigate(`/cabinet/applications/${id}`);
       } catch (e) {

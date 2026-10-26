@@ -197,21 +197,34 @@ func (s *Service) Sign(ctx context.Context, clientID, id string, confirm bool) (
 	if _, err := s.Get(ctx, clientID, id); err != nil {
 		return nil, err
 	}
+	// Зачисление идёт ВНУТРИ атомарного обновления заявки, как в Pay: порядок блокировок «заявка → счёт».
+	// В PostgreSQL это одна транзакция; в файловом режиме — компенсация, если заявка не сохранилась.
 	var a *domain.Application
+	var credited int64
 	err := s.tx().InTx(ctx, func(ctx context.Context) error {
 		var err error
-		a, err = s.Repo.Update(ctx, id, func(a *domain.Application) error {
-			return a.Transition(domain.StatusIssued, "client", "Договор подписан ПЭП, средства зачислены на расчётный счёт (симуляция)", s.Now())
+		a, err = s.Repo.Update(ctx, id, func(x *domain.Application) error {
+			if err := x.Transition(domain.StatusIssued, "client", "Договор подписан ПЭП, средства зачислены на расчётный счёт (симуляция)", s.Now()); err != nil {
+				return err
+			}
+			// Зачисление на расчётный счёт. В целевой архитектуре — проводка в АБС по событию loan.issued.
+			if s.Users == nil {
+				return nil
+			}
+			if _, err := s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { u.Credit(x.Amount); return nil }); err != nil {
+				return err
+			}
+			credited = x.Amount
+			return nil
 		})
-		if err != nil {
-			return err
-		}
-		// Зачисление на расчётный счёт. В целевой архитектуре — проводка в АБС по событию loan.issued.
-		if s.Users != nil {
-			_, err = s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { u.Credit(a.Amount); return nil })
-		}
 		return err
 	})
+	if err != nil && credited > 0 && !s.transactional() {
+		// файловый режим: деньги зачислены, но заявка не сохранилась — списываем обратно
+		if _, cerr := s.Users.UpdateUser(ctx, clientID, func(u *domain.User) error { return u.Debit(credited) }); cerr != nil {
+			obs.L(ctx).Error("sign compensation failed: credited amount not reverted", "app", id, "amount", credited, "err", cerr)
+		}
+	}
 	s.audit(ctx, "loan.sign_and_disburse", id, err, map[string]any{"amount": amountOf(a)})
 	if err != nil {
 		return nil, err

@@ -50,6 +50,62 @@ func TestEventDrivenPipelineReachesDecision(t *testing.T) {
 	t.Fatalf("event-driven pipeline stuck at %s", got.Status)
 }
 
+// txSpy — транзакция, которая помнит, открыта ли она сейчас.
+type txSpy struct{ open *bool }
+
+func (t txSpy) InTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	*t.open = true
+	defer func() { *t.open = false }()
+	return fn(ctx)
+}
+
+// bureauSpy считает запросы в БКИ, сделанные внутри транзакции.
+type bureauSpy struct {
+	integrations.CreditBureau
+	open *bool
+	inTx *int
+}
+
+func (b bureauSpy) Report(ctx context.Context, inn string) (*domain.BureauReport, error) {
+	if *b.open {
+		*b.inTx++
+	}
+	return b.CreditBureau.Report(ctx, inn)
+}
+
+type memInbox map[string]bool
+
+func (m memInbox) MarkProcessed(_ context.Context, consumer, id string) (bool, error) {
+	k := consumer + "/" + id
+	if m[k] {
+		return false, nil
+	}
+	m[k] = true
+	return true, nil
+}
+
+// Регрессия: реестр и БКИ опрашиваются до транзакции — в ней только отметка inbox и изменение заявки,
+// иначе соединение с БД держится всё время, пока отвечают внешние сервисы.
+func TestHandleCallsServicesOutsideTransaction(t *testing.T) {
+	repo, _ := storage.NewFileStore("")
+	open, inTx := false, 0
+	inbox := memInbox{}
+	w := &Worker{Repo: repo, Registry: integrations.MockRegistry{}, Bureau: bureauSpy{integrations.MockBureau{}, &open, &inTx},
+		Tx: txSpy{&open}, Inbox: inbox, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: time.Now}
+	a := submitted(t, repo, "7701234567", 3_000_000, 84_000_000, 0)
+	if err := w.Step(ctx, a); err != nil { // submitted → data_check
+		t.Fatal(err)
+	}
+	checking, _ := repo.Get(ctx, a.ID)
+	if err := w.Handle(ctx, events.FromChange(a, checking, "")[0]); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := repo.Get(ctx, a.ID)
+	if got.Status != domain.StatusScoring || inTx != 0 || len(inbox) != 1 {
+		t.Fatalf("status %s, bureau calls inside tx %d, inbox %v", got.Status, inTx, inbox)
+	}
+}
+
 // Повторная доставка того же события (at-least-once) не продвигает заявку дважды.
 func TestDuplicateEventIsHarmless(t *testing.T) {
 	repo, _ := storage.NewFileStore("")
